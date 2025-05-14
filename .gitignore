@@ -4,5 +4,7 @@ build/
 *.pdb
 *.raddbgi
 *.rdi
+*.natvis
+*.natstepfilter
 
 examples/.build
