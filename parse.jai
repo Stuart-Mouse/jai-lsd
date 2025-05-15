@@ -231,10 +231,7 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
                 // we don't want to set it if the name member has a binding to a child node
                 if member == name_member then name_member = null;
                 
-                member_any := Any.{
-                    value_pointer = node.binding.value_pointer + member.offset_in_bytes,
-                    type          = member.type,
-                };
+                member_any := Any.{ member.type, node.binding.value_pointer + member.offset_in_bytes };
                 add_data_binding_to_node(it, member_any);
             }
             
@@ -245,23 +242,46 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
           case .ARRAY;
             ti_array := node.binding.type.(*Type_Info_Array);
             
-            io_data := get_io_data(ti_array);
-            if io_data && (.ARRAY_INDEXED & io_data.parse.flags)
-                then node.field_flags |= .ARRAY_INDEXED;
-                
-            // TODO: I have no idea what the below logic was originally intended to do...
-            // else if ti_array.element_type.type == .STRUCT 
-            //     then node.flags |= .ARRAY_AS_OBJECT;
+            if io_data && (.ARRAY_INDEXED & io_data.parse.flags) {
+                node.field_flags |= .ARRAY_INDEXED;
+            }
+            
+            element_io_data   := get_io_data(ti_array.element_type);
+            element_is_struct := ti_array.element_type.type == .STRUCT;
+            
+            if element_is_struct {
+                node.flags |= .ARRAY_AS_OBJECT;
+                if !element_io_data.name_member {
+                    log("Data binding error: object-type array must contain a struct with a defined name member.");
+                    return false;
+                }
+            }
+            
+            if !(node.flags & (.ARRAY_AS_OBJECT | .ARRAY_INDEXED)) {
+                log("Data binding error: object-type array must contain a struct with a defined name member.");
+                return false;
+            }
             
             if ti_array.array_type == .RESIZABLE {
                 raw_array := node.binding.value_pointer.(*Resizable_Array);
 
                 if .ARRAY_INDEXED & node.field_flags {
                     for node_object.fields {
-                        elem_index := -1;
-                        if io_data.enum_index_type 
-                            then elem_index = enum_name_to_value(xx io_data.enum_index_type, it.name);
-                            else elem_index = to_integer(it.name);
+                        elem_index: int;
+                        ok: bool;
+                        if io_data.enum_index_type {
+                            elem_index, ok = enum_name_to_value(xx io_data.enum_index_type, it.name);
+                            if !ok {
+                                log("Data Binding Error: Unable to parse enum value from string: %", it.name);
+                                return false;
+                            }
+                        } else {
+                            elem_index, ok = to_integer(it.name);
+                            if !ok {
+                                log("Data Binding Error: Unable to parse integer from string: %", it.name);
+                                return false;
+                            }
+                        }
                         elem_any := array_add_any_at_index(node.binding, elem_index);
                         add_data_binding_to_node(it, elem_any);
                     }
@@ -275,9 +295,7 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
                     }
                 }
             } else { // .FIXED and .VIEW
-                io_data := get_io_data(node.binding.type);
-                
-                elem_count, data := get_array_count_and_data(node.binding.value_pointer, ti_array);
+                array_count, array_data := get_array_count_and_data(node.binding.value_pointer, ti_array);
                 
                 if .ARRAY_INDEXED & node.field_flags {
                     for node_object.fields {
@@ -286,30 +304,31 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
                             then elem_index = enum_name_to_value(xx io_data.enum_index_type, it.name);
                             else elem_index = to_integer(it.name);
                         
-                        if elem_index < 0 || elem_index >= elem_count {
+                        if elem_index < 0 || elem_index >= array_count {
                             log("Error: array index is out of bounds.");
                             return false;
                         }
                         
-                        elem_any := Any.{ ti_array.element_type, data + (ti_array.element_type.runtime_size * elem_index) };
+                        elem_any := Any.{ ti_array.element_type, array_data + (ti_array.element_type.runtime_size * elem_index) };
                         add_data_binding_to_node(it, elem_any);
                     }
                 } else {
-                    if node_object.fields.count > elem_count {
+                    if ti_array.array_type == .VIEW {
+                        raw_array   := node.data_binding.value_pointer.(*Array_View_64);
+                        array_count  = node.children.count;
+                        new_size    := array_count * ti_array.element_type.runtime_size;
+                        array_data   = realloc(raw_array.data, new_size, raw_array.count * ti_array.element_type.runtime_size);
+                        raw_array.*  = .{ array_count, array_data };
+                        log("raw array: %", raw_array.*);
+                    }
+                    
+                    if node_object.fields.count > array_count {
                         log("Error: too many elements in array.");
                         return false;
                     }
                     
-                    if ti_array.element_type.type == .STRUCT {
-                        node.field_flags |= .ARRAY_AS_OBJECT;
-                        // TODO: also check the io data to see if name member is defined
-                    } else {
-                        log("Data binding error: object-type array must contain a struct with a defined name member.");
-                        return false;
-                    }
-                    
                     for node_object.fields {
-                        elem_any := Any.{ ti_array.element_type, data + (ti_array.element_type.runtime_size * it_index) };
+                        elem_any := Any.{ ti_array.element_type, array_data + (ti_array.element_type.runtime_size * it_index) };
                         add_data_binding_to_node(it, elem_any);
                     }
                 }
@@ -339,21 +358,23 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
                 log("Data binding error: array-type struct contains too many elements.");
                 return false;
             }
+            
+            last_member_offset := -1;
             for node_array.fields {
-                // TODO: check for overlapping and constant struct members
                 member := ti_struct.members[it_index];
-                member_any := Any.{
-                    value_pointer = node.binding.value_pointer + member.offset_in_bytes,
-                    type          = member.type,
-                };
+                if member.flags & .CONTSTANT  break;
+                if member.offset_in_bytes < last_member_offset  break;
+                last_member_offset = member.offset_in_bytes;
+                
+                member_any := Any.{ member.type, node.binding.value_pointer + member.offset_in_bytes };
                 add_data_binding_to_node(it, member_any);
             }
             
           case .ARRAY;
             ti_array := node.binding.type.(*Type_Info_Array);
             
-            data:  *void;
-            count: int;
+            array_data:   *void;
+            array_count:  int;
             count_before: int; // for dynamic array case, where we want to leave the existing items untouched
             
             if ti_array.array_type == {
@@ -378,36 +399,34 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
                 array_reserve_nonpoly(xx raw_array, count_before + node_array.fields.count, ti_array.element_type.runtime_size);
                 raw_array.count += node_array.fields.count;
                 
-                data  = raw_array.data;
-                count = raw_array.count;
+                // address stored to array_data is first empty element
+                array_data  = raw_array.data + count_before * ti_array.element_type.runtime_size;
+                array_count = raw_array.count;
                 
               case .VIEW;
                 raw_array := node.binding.value_pointer.(*Array_View_64);
                 
-                // count_before = raw_array.count;
-                // raw_array.count += node_array.fields.count;
-                // raw_array.data   = realloc(raw_array.data, ti_array.element_type.runtime_size * raw_array.count, ti_array.element_type.runtime_size * count_before);
+                count_before     = raw_array.count;
+                raw_array.count += node_array.fields.count;
+                raw_array.data   = realloc(raw_array.data, ti_array.element_type.runtime_size * raw_array.count, ti_array.element_type.runtime_size * count_before);
                 
-                raw_array.count = node_array.fields.count;
-                raw_array.data  = alloc(ti_array.element_type.runtime_size * raw_array.count);
+                // raw_array.count = node_array.fields.count;
+                // raw_array.data  = alloc(ti_array.element_type.runtime_size * raw_array.count);
                 
-                data  = raw_array.data;
-                count = raw_array.count;
+                array_data  = raw_array.data;
+                array_count = raw_array.count;
                 
               case .FIXED;
-                data  = node.binding.value_pointer;
-                count = ti_array.array_count;
-                if node_array.fields.count > count {
+                array_data  = node.binding.value_pointer;
+                array_count = ti_array.array_count;
+                if node_array.fields.count > array_count {
                     log("Data binding error: bounds check failed on fixed-size array.");
                     return false;
                 }
             }
             
             for node_array.fields {
-                elem_any := Any.{
-                    value_pointer = data + (ti_array.element_type.runtime_size * it_index),
-                    type          = ti_array.element_type,
-                };
+                elem_any := Any.{ ti_array.element_type, array_data + (ti_array.element_type.runtime_size * it_index) };
                 add_data_binding_to_node(it, elem_any);
             }
             
