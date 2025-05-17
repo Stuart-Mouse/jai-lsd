@@ -52,10 +52,9 @@ load_and_parse_file :: (path: string, code: Code) -> bool #expand {
 #import "Reflection";
 #import "String";
 #import "Flat_Pool";
-using,except(next_power_of_two) Hash_Table :: #import "Hash_Table";
 
 #import "Utils";
-#import "Data_Packer";
+#import "Convert";
 using LS :: #import "Lead_Sheets";
 
 
@@ -67,7 +66,7 @@ coerce_small_any :: inline (dst_type: Type, src: Small_Any) -> (Small_Any, bool)
 coerce_small_any :: (dst_type: *Type_Info, src: Small_Any) -> (Small_Any, bool) {
     if is_numeric_type(dst_type) && is_numeric_type(src.type) {
         dst := Small_Any.{ type = dst_type };
-        remap_data(to_any(*dst), to_any(*src));
+        any_to_any(to_any(*dst), to_any(*src));
         return dst, true;
     }
     return .{}, false;

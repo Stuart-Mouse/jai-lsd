@@ -200,8 +200,8 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
             name_member_any = Any.{ name_member.type, node.binding.value_pointer + name_member.offset_in_bytes };
         }
         
-        if io_data.parse.bind_proc {
-            node.binding = io_data.parse.bind_proc(node.binding);
+        if io_data.bind_proc {
+            node.binding = io_data.bind_proc(node.binding);
             if node.binding.value_pointer == null {
                 log("Error, bind_proc() returned null.");
                 return false;
@@ -212,7 +212,7 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
     }
     
     defer if name_member {
-        return remap_data(name_member_any, node.name);
+        return any_to_any(name_member_any, node.name);
     }
     
     // TODO: think about whether we want to reimplement this functionality
@@ -242,7 +242,7 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
           case .ARRAY;
             ti_array := node.binding.type.(*Type_Info_Array);
             
-            if io_data && (.ARRAY_INDEXED & io_data.parse.flags) {
+            if io_data && (.ARRAY_INDEXED & io_data.flags) {
                 node.field_flags |= .ARRAY_INDEXED;
             }
             
@@ -250,14 +250,14 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
             element_is_struct := ti_array.element_type.type == .STRUCT;
             
             if element_is_struct {
-                node.flags |= .ARRAY_AS_OBJECT;
-                if !element_io_data.name_member {
-                    log("Data binding error: object-type array must contain a struct with a defined name member.");
-                    return false;
-                }
+                node.field_flags |= .ARRAY_AS_OBJECT;
+                // if !element_io_data || !element_io_data.name_member {
+                //     log("Data binding error: object-type array must contain a struct with a defined name member.");
+                //     return false;
+                // }
             }
             
-            if !(node.flags & (.ARRAY_AS_OBJECT | .ARRAY_INDEXED)) {
+            if !(node.field_flags & (.ARRAY_AS_OBJECT | .ARRAY_INDEXED)) {
                 log("Data binding error: object-type array must contain a struct with a defined name member.");
                 return false;
             }
@@ -314,8 +314,8 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
                     }
                 } else {
                     if ti_array.array_type == .VIEW {
-                        raw_array   := node.data_binding.value_pointer.(*Array_View_64);
-                        array_count  = node.children.count;
+                        raw_array   := node.binding.value_pointer.(*Array_View_64);
+                        array_count  = node_object.fields.count;
                         new_size    := array_count * ti_array.element_type.runtime_size;
                         array_data   = realloc(raw_array.data, new_size, raw_array.count * ti_array.element_type.runtime_size);
                         raw_array.*  = .{ array_count, array_data };
@@ -362,7 +362,7 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
             last_member_offset := -1;
             for node_array.fields {
                 member := ti_struct.members[it_index];
-                if member.flags & .CONTSTANT  break;
+                if member.flags & .CONSTANT  break;
                 if member.offset_in_bytes < last_member_offset  break;
                 last_member_offset = member.offset_in_bytes;
                 
