@@ -212,7 +212,7 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
     }
     
     defer if name_member {
-        return any_to_any(name_member_any, node.name);
+        return Convert.any_to_any(name_member_any, node.name);
     }
     
     // TODO: think about whether we want to reimplement this functionality
@@ -577,7 +577,7 @@ typechecking_callback :: (
             return null; 
         }
         reference.resolved_field = resolved_field;
-        reference.resolved_field_index = Small_Any.from(resolved_index);
+        reference.resolved_field_index = Any_Number.from(resolved_index);
         
         if reference.resolved_field.binding.value_pointer == null {
             // TODO: handle this case by creating temporary instance of hinted type?
@@ -594,7 +594,8 @@ typechecking_callback :: (
             reference.value_type = type_info(int);
             if hint_type {
                 reference.value_type = hint_type;
-                reference.resolved_field_index = coerce_small_any(hint_type, reference.resolved_field_index);
+                // convert reference.resolved_field_index to the hinted type and store back into same place
+                Convert.any_to_any(Any.{ reference.value_type, *reference.resolved_field_index.value }, to_any(*reference.resolved_field_index));
             }
         }
         return reference.value_type;

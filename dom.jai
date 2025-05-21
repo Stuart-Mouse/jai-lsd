@@ -86,7 +86,7 @@ Node_Reference :: struct {
     reference_type:         Reference_Type;
     field_path:             string;
     resolved_field:         *Node_Field;
-    resolved_field_index:   Small_Any;
+    resolved_field_index:   Any_Number;
 }
 
 get_fields :: inline (field: *Node_Field) -> *Field_List {
