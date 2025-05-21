@@ -450,6 +450,9 @@ maybe make arrays work in arbitrary expressions first, since this will be very s
     main issue will be not being able to provide an explicit type...
 
 
+port some of the dom.jai improvements from recent GON refactoring
+
+
 
 
 

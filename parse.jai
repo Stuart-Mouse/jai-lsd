@@ -13,8 +13,8 @@ Parser :: struct {
 init_parser :: (parser: *Parser, file: string, file_path := "") {
     init_script(*parser.script);
     
-    parser.script.my_parse_leaf   = gon_parse_leaf;
-    parser.script.my_parse_binary = gon_parse_binary;
+    parser.script.my_parse_leaf   = my_parse_leaf;
+    parser.script.my_parse_binary = my_parse_binary;
     
     parser.script.typecheck_callback = typechecking_callback;
     parser.script.evaluate_callback  = evaluation_callback;
@@ -616,7 +616,7 @@ make_reference :: (script: *Script, type: Reference_Type, path: string) -> *Node
 
 // Custom versions of parse_leaf and parse_binary are implemented here to remove some of the LS features which we do not want to use in GON.
 
-gon_parse_leaf :: (using script: *Script) -> *Node {
+my_parse_leaf :: (using script: *Script) -> *Node {
     token := get_token(*lexer);
     
     is_operator, operator_type, precedence := token_is_operator(token, expect_unary = true);
@@ -726,7 +726,7 @@ gon_parse_leaf :: (using script: *Script) -> *Node {
     return null;
 }
 
-gon_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node {
+my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node {
     token := peek_token(*lexer);
     
     // In addition to normal binary operators, we have a few binary-operator-like constructs that have essentially infinite operator precedence.
