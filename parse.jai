@@ -79,7 +79,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
         next_token := peek_token(*lexer);
         if next_token.type == .EOF {
             if current_parent != dom_root {
-                log("GON parse error: Unexpected % token \"%\" at (%:%).", next_token.type, next_token.text, next_token.location.line_number, next_token.location.character_number);
+                log("%:%,%: GON parse error: Unexpected EOF.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type, next_token.text);
                 return false;
             }
             break parse_loop;
@@ -92,14 +92,14 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
                 name_token = get_token(*lexer);
                 next_token = get_token(*lexer);
                 if next_token.type != .COLON {
-                    log("GON parse error: Expected colon after field name '%', got % \"%\" @ (%:%)", name_token.text, next_token.type, next_token.text, next_token.location.line_number, next_token.location.character_number);
+                    log("%:%,%: GON parse error: Expected colon after field name '%', got % \"%\"", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, name_token.text, next_token.type, next_token.text);
                     return false;
                 }
             }
             
           case .CLOSE_BRACE;
             if !is_object(current_parent) {
-                log("GON parse error: Unexpected % token \"%\" at (%:%).", next_token.type, next_token.text, next_token.location.line_number, next_token.location.character_number);
+                log("%:%,%: GON parse error: Unexpected closing brace, parent is not an object.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type, next_token.text);
                 return false;
             }
             get_token(*lexer);
@@ -109,7 +109,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
             
           case .CLOSE_BRACKET;
             if !is_array(current_parent) {
-                log("GON parse error: Unexpected % token \"%\" at (%:%).", next_token.type, next_token.text, next_token.location.line_number, next_token.location.character_number);
+                log("%:%,%: GON parse error: Unexpected closing bracket, parent is not an array.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type, next_token.text);
                 return false;
             }
             get_token(*lexer);
@@ -151,7 +151,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
               case .EOF;
               case .COMMA; get_token(*lexer);
               case;
-                log("GON parse error: Unexpected % token \"%\" at (%:%).", next_token.type, next_token.text, next_token.location.line_number, next_token.location.character_number);
+                log("%:%,%: GON parse error: Unexpected % token, expected end of scope or expression delimiter.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type, next_token.text);
             }
         }
         
