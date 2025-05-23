@@ -287,7 +287,7 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
                     }
                 } else {
                     count_before := raw_array.count;
-                    array_reserve_nonpoly(xx raw_array, count_before + node_object.fields.count, ti_array.element_type.runtime_size);
+                    array_reserve(raw_array, count_before + node_object.fields.count, ti_array.element_type.runtime_size);
                     raw_array.count += node_object.fields.count;
                     for node_object.fields {
                         elem_any := Any.{ ti_array.element_type, raw_array.data + ((count_before + it_index) * ti_array.element_type.runtime_size) };
@@ -396,7 +396,7 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
                     We won't do this unless we need to though. For now, the current method is fine.
                 */
                 count_before = raw_array.count;
-                array_reserve_nonpoly(xx raw_array, count_before + node_array.fields.count, ti_array.element_type.runtime_size);
+                array_reserve(raw_array, count_before + node_array.fields.count, ti_array.element_type.runtime_size);
                 raw_array.count += node_array.fields.count;
                 
                 // address stored to array_data is first empty element
