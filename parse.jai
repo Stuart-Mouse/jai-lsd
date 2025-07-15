@@ -65,7 +65,7 @@ process_data_bindings :: (parser: *Parser) -> bool {
     Although, if we ever remove the pointer to parent from DOM nodes, we may go ahead and just make this recursive.
 */
 construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
-    push_allocator(get_pool_allocator(*script.pool));
+    push_allocator(LS.get_pool_allocator(*script.pool));
     
     current_parent = null;
     dom_root       = alloc_node(*script, Node_Field);
@@ -388,13 +388,6 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
                     and that we don't have to realloc when we make data bindings for elements below.
                     Because if we realloc then that invalidates the pointers in the data bindings that we created
                     for all previous elements, since those are now pointing to the old locations of each element.
-                    This may prove to be more fragile aspects of the DOM parser in contrast to the SAX implementation.
-                    Because this definitely seems like something that a user could break through a problematic callback procedure.
-                    
-                    We could potentially fix this by changing how we store data bindings.
-                    For array elements, instead of storing a pointer to data, store a pointer to a the base pointer and also element offset.
-                    We could have a node flag to indicate that we should use this scheme instead of the usual one.
-                    We won't do this unless we need to though. For now, the current method is fine.
                 */
                 resize(Any_Array.from(node.binding), count_before + node_array.fields.count, true);
                 
@@ -702,7 +695,7 @@ my_parse_leaf :: (using script: *Script) -> *Node {
         if !expect_token_type(*lexer, .CLOSE_PAREN) {
             expressions, ok := parse_comma_separated_expressions(script,, temp);
             if !ok  return null;
-            directive.arguments = array_copy(expressions,, get_pool_allocator(*script.pool));
+            directive.arguments = array_copy(expressions,, LS.get_pool_allocator(*script.pool));
             
             close_paren_token := get_token(*lexer);
             if close_paren_token.type != .CLOSE_PAREN {
