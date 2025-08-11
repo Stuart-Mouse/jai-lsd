@@ -79,7 +79,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
         next_token := peek_token(*lexer);
         if next_token.type == .EOF {
             if current_parent != dom_root {
-                log("%:%,%: GON parse error: Unexpected EOF.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type, next_token.text);
+                log("%:%,%: GON parse error: Unexpected EOF.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number);
                 return false;
             }
             break parse_loop;
@@ -99,7 +99,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
             
           case .CLOSE_BRACE;
             if !is_object(current_parent) {
-                log("%:%,%: GON parse error: Unexpected closing brace, parent is not an object.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type, next_token.text);
+                log("%:%,%: GON parse error: Unexpected closing brace, parent is not an object.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number);
                 return false;
             }
             get_token(*lexer);
@@ -109,7 +109,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
             
           case .CLOSE_BRACKET;
             if !is_array(current_parent) {
-                log("%:%,%: GON parse error: Unexpected closing bracket, parent is not an array.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type, next_token.text);
+                log("%:%,%: GON parse error: Unexpected closing bracket, parent is not an array.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number);
                 return false;
             }
             get_token(*lexer);
@@ -124,18 +124,18 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
             return false;
         }
         
-        node := alloc_node(*script, Node_Field);
+        node := alloc_node(*script, Node_Field, loc = next_token.location);
         node.parent = current_parent;
         
         next_token = peek_token(*lexer);
         if next_token.type == {
           case .OPEN_BRACE;
-            node.value = alloc_node(*script, Node_Object);
+            node.value = alloc_node(*script, Node_Object, loc = next_token.location);
             node.value.(*Node_Object).parent = node;
             node.location = get_token(*lexer).location;
             
           case .OPEN_BRACKET;
-            node.value = alloc_node(*script, Node_Array);
+            node.value = alloc_node(*script, Node_Array, loc = next_token.location);
             node.value.(*Node_Object).parent = node;
             node.location = get_token(*lexer).location;
             
@@ -151,7 +151,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
               case .EOF;
               case .COMMA; get_token(*lexer);
               case;
-                log("%:%,%: GON parse error: Unexpected % token, expected end of scope or expression delimiter.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type, next_token.text);
+                log("%:%,%: GON parse error: Unexpected % token, expected end of scope or expression delimiter.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type);
             }
         }
         
@@ -535,6 +535,7 @@ typechecking_callback :: (
         
       case Node_Object;
         object := node.(*Node_Object);
+        
         if hint_type == null {
             set_typecheck_error(script, "Missing type hint on Node_Object.", node = node, type = .MISSING_TYPE_HINT, loc = node.location);
             return null;
@@ -548,6 +549,7 @@ typechecking_callback :: (
         
       case Node_Array;
         array := node.(*Node_Array);
+        
         if hint_type == null {
             set_typecheck_error(script, "Missing type hint on Node_Array.", node = node, type = .MISSING_TYPE_HINT, loc = node.location);
             return null;
