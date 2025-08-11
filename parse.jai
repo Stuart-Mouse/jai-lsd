@@ -32,7 +32,7 @@ deinit_parser :: (parser: *Parser) {
 parse_file_to_dom :: (file: string, filepath := "") -> (Parser, bool) {
     parser: Parser;
     init_parser(*parser, file, filepath);
-    if !construct_dom_from_gon_file(*parser)  return .{}, false;
+    if !construct_dom_from_gon_file(*parser)  return parser, false;
     return parser, true;
 }
 
