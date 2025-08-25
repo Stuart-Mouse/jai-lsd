@@ -398,12 +398,12 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
               case .VIEW;
                 raw_array := node.binding.value_pointer.(*Array_View_64);
                 
-                count_before     = raw_array.count;
-                raw_array.count += node_array.fields.count;
-                raw_array.data   = realloc(raw_array.data, ti_array.element_type.runtime_size * raw_array.count, ti_array.element_type.runtime_size * count_before);
+                // count_before     = raw_array.count;
+                // raw_array.count += node_array.fields.count;
+                // raw_array.data   = realloc(raw_array.data, ti_array.element_type.runtime_size * raw_array.count, ti_array.element_type.runtime_size * count_before);
                 
-                // raw_array.count = node_array.fields.count;
-                // raw_array.data  = alloc(ti_array.element_type.runtime_size * raw_array.count);
+                raw_array.count = node_array.fields.count;
+                raw_array.data  = alloc(ti_array.element_type.runtime_size * raw_array.count);
                 
                 array_data  = raw_array.data;
                 array_count = raw_array.count;

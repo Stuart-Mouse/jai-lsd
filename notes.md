@@ -454,5 +454,15 @@ port some of the dom.jai improvements from recent GON refactoring
 
 
 
+## Object patching semantics
 
+In addition to adding better semantics for struct / array literals,
+it would be nice to have some semantics for applying merging two structs (binary merge operator)
+    or for applying a single struct literal as a member-wise patch to the existing lvalue (unary merge operator)
+
+This would already be helpful for defining certain object members based on others, 
+    or for example, modifying a base/default value (e.g. defining physics in the enemy templates)
+
+It would also be helpful for modders in the future to simply apply patches/merges on existing lsd data files
+    not sure exactly how we make the file-level semantics work yet, but that would be the next logical step
 

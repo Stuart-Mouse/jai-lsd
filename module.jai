@@ -1,11 +1,3 @@
-/*
-    The Jai GON Parser
-
-    This module is provided with no warranty or guarantees whatsoever. 
-    I don't know what all the proper legal jargon is to include here, and I have not yet selected a proper license for the code. 
-    For now, do whatever you wish with the code, so long as it's good. And make sure to link back to this original project.
-*/
-
 
 /*
     'parser' gets exported to caller, not sure if I like this or not, since it then exists outside macro, 
