@@ -319,7 +319,6 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
                         new_size    := array_count * ti_array.element_type.runtime_size;
                         array_data   = realloc(raw_array.data, new_size, raw_array.count * ti_array.element_type.runtime_size);
                         raw_array.*  = .{ array_count, array_data };
-                        log("raw array: %", raw_array.*);
                     }
                     
                     if node_object.fields.count > array_count {
@@ -525,7 +524,7 @@ typechecking_callback :: (
         value_type := typecheck_node(script, field.value, hint_type = field.binding.type);
         if !value_type  return null;
         if field.binding.type != value_type {
-            set_general_error(script, "Mismatched types on field binding and value expression." /*as_type(field.binding.type), as_type(value_type),*/, loc = node.location);
+            set_general_error(script, "Mismatched types on field binding and value expression. Expected %, got %.", as_type(field.binding.type), as_type(value_type), loc = node.location);
             return null;
         }
         
