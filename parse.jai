@@ -156,7 +156,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
         }
         
         if node.value == null {
-            log("GON parse error: failed to parse expression.");
+            log("GON parse error: failed to parse expression @ %", node.location);
             log(format_error(script.error));
             return false;
         }
