@@ -14,8 +14,8 @@ IO_Data :: struct {
     enum_index_type:    *Type_Info_Enum;
     
     
-    bind_proc:  #type (Any) -> Any;
-    parse_proc: #type (value: Any, text: string) -> bool;
+    bind_proc:  (Any) -> Any;
+    parse_proc: (value: Any, text: string) -> bool;
     
     flags: Flags;
     

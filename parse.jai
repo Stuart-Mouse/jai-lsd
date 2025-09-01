@@ -469,6 +469,17 @@ evaluation_callback :: (
             return Void_Any;
         }
         
+        // NOTE: can only use a parse proc when the value type is string
+        io_data := get_io_data(field.binding.type);
+        if io_data && io_data.parse_proc && field.value.value_type == xx string {
+            temp_string: string;
+            evaluate_node(script, field.value, *temp_string);
+            if !!script.error  return Null_Any;
+            
+            ok := io_data.parse_proc(field.binding, temp_string);
+            return ifx ok then Void_Any else Null_Any;
+        }
+        
         evaluate_node(script, field.value, field.binding.value_pointer);
         if !!script.error  return Null_Any;
         if field.binding.type.type == .STRING {
@@ -523,7 +534,13 @@ typechecking_callback :: (
         
         value_type := typecheck_node(script, field.value, hint_type = field.binding.type);
         if !value_type  return null;
-        if field.binding.type != value_type {
+        
+        // NOTE: if an io data parse proc is present, then the value_type of the RHS can always be a string
+        //       this will not affect the value type of the field itself, which will still just be the binding's type
+        io_data := get_io_data(field.binding.type);
+        can_use_io_data_parse_proc := io_data != null && io_data.parse_proc != null && value_type == xx string;
+        
+        if field.binding.type != value_type && !can_use_io_data_parse_proc {
             set_general_error(script, "Mismatched types on field binding and value expression. Expected %, got %.", as_type(field.binding.type), as_type(value_type), loc = node.location);
             return null;
         }
