@@ -1,3 +1,4 @@
+#import "Print_Vars";
 
 // used to build a DOM from a text file and evaluate data bindings on that DOM
 Parser :: struct {
@@ -212,7 +213,12 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
     }
     
     defer if name_member {
-        return Convert.any_to_any(name_member_any, node.name);
+        name_member_io_data := get_io_data(name_member_any.type);
+        if name_member_io_data && name_member_io_data.parse_proc {
+            return name_member_io_data.parse_proc(name_member_any, node.name);
+        } else {
+            return Convert.any_to_any(name_member_any, node.name);
+        }
     }
     
     // TODO: think about whether we want to reimplement this functionality
