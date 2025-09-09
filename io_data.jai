@@ -67,10 +67,10 @@ get_io_data :: inline (type: *Type_Info) -> *IO_Data {
         if it.type == type
             return *it.io_data;
     
-    // second pass for polymorphic types
+    // second pass for polymorphic structs
     if type.type == .STRUCT {
         for *IO_Data_Lookup {
-            if type_is_polymorph_of(xx type, xx it.type) {
+            if type.(*Type_Info_Struct).polymorph_source_struct == xx it.type {
                 return *it.io_data;
             }
         }
