@@ -143,6 +143,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
           case;
             node.value = my_parse_expression(*script, 0);
             if !node.value {
+                log("asl;kdjfalskjdf");
                 log(format_error(script.error));
             }
             next_token := peek_token(*lexer);
@@ -159,6 +160,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
         if node.value == null {
             log("GON parse error: failed to parse expression @ %", node.location);
             log(format_error(script.error));
+            log("next_token: %", next_token);
             return false;
         }
         
@@ -685,6 +687,19 @@ my_parse_leaf :: (using script: *Script) -> *Node {
             return null;
         }
         return expression;
+        
+        
+      case .TRUE;
+        literal := alloc_node(script, Node_Literal, loc = token.location, trivia = token.trivia);
+        literal.literal_type = .BOOLEAN;
+        literal.number       = to_any_number(true);
+        return literal;
+        
+      case .FALSE;
+        literal := alloc_node(script, Node_Literal, loc = token.location, trivia = token.trivia);
+        literal.literal_type = .BOOLEAN;
+        literal.number       = to_any_number(false);
+        return literal;
         
         
       case .NUMBER;
