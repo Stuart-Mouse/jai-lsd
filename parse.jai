@@ -25,7 +25,7 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
 }
 
 deinit_parser :: (parser: *Parser) {
-    free_script(*parser.script);
+    deinit_script(*parser.script);
 }
 
 // creates a dom parser with the given parameters, intializes it, and constructs the dom from the given file
