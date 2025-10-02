@@ -16,7 +16,7 @@ load_and_parse_file :: (path: string, code: Code) -> bool #expand {
     defer deinit_parser(*parser);
     if !parser_ok {
         log("Unable to parse gon file '%'!", path);
-        log(format_error(parser.error)); 
+        log(format_error(parser)); 
         return false;
     }
     
@@ -24,7 +24,7 @@ load_and_parse_file :: (path: string, code: Code) -> bool #expand {
     
     if !process_data_bindings(*parser)  {
         log("Failed to process data bindings for gon file '%'!", path);
-        log(format_error(parser.error)); 
+        log(format_error(parser)); 
         return false;
     }
     

@@ -144,7 +144,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
             node.value = my_parse_expression(*script, 0);
             if !node.value {
                 log("asl;kdjfalskjdf");
-                log(format_error(script.error));
+                log(format_error(*script));
             }
             next_token := peek_token(*lexer);
             if next_token.type == {
@@ -159,7 +159,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
         
         if node.value == null {
             log("GON parse error: failed to parse expression @ %", node.location);
-            log(format_error(script.error));
+            log(format_error(*script));
             log("next_token: %", next_token);
             return false;
         }
