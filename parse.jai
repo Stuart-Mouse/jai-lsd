@@ -14,6 +14,12 @@ Parser :: struct {
 init_parser :: (parser: *Parser, file: string, file_path := "") {
     init_script(*parser.script);
     
+    array_add(*parser.operator_table,
+        .{ .PREFIX, "&",  8, "" },
+        .{ .PREFIX, "*",  8, "" },
+        .{ .PREFIX, "$",  8, "" },
+    );
+    
     parser.script.my_parse_leaf   = my_parse_leaf;
     parser.script.my_parse_binary = my_parse_binary;
     
@@ -21,7 +27,7 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
     parser.script.evaluate_callback  = evaluation_callback;
     register_common_types(*parser.script);
     
-    init_lexer(*parser.lexer, file, location = .{ file_path, 1, 1 });
+    init_lexer(parser, file, location = .{ file_path, 1, 1 });
 }
 
 deinit_parser :: (parser: *Parser) {
@@ -77,7 +83,7 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
     while parse_loop := (current_parent != null) {
         name_token: Token;
         
-        next_token := peek_token(*lexer);
+        next_token := peek_token(*script);
         if next_token.type == .EOF {
             if current_parent != dom_root {
                 log("%:%,%: GON parse error: Unexpected EOF.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number);
@@ -90,8 +96,8 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
           case .IDENTIFIER; #through;
           case .STRING;
             if is_object(current_parent) {
-                name_token = get_token(*lexer);
-                next_token = get_token(*lexer);
+                name_token = get_token(*script);
+                next_token = get_token(*script);
                 if next_token.type != .COLON {
                     log("%:%,%: GON parse error: Expected colon after field name '%', got % \"%\"", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, name_token.text, next_token.type, next_token.text);
                     return false;
@@ -103,8 +109,8 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
                 log("%:%,%: GON parse error: Unexpected closing brace, parent is not an object.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number);
                 return false;
             }
-            get_token(*lexer);
-            expect_token_type(*lexer, .COMMA);
+            get_token(*script);
+            expect_token_type(*script, .COMMA);
             current_parent = current_parent.parent;
             continue;
             
@@ -113,8 +119,8 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
                 log("%:%,%: GON parse error: Unexpected closing bracket, parent is not an array.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number);
                 return false;
             }
-            get_token(*lexer);
-            expect_token_type(*lexer, .COMMA);
+            get_token(*script);
+            expect_token_type(*script, .COMMA);
             current_parent = current_parent.parent;
             continue;
         }
@@ -128,17 +134,17 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
         node := alloc_node(*script, Node_Field, loc = next_token.location);
         node.parent = current_parent;
         
-        next_token = peek_token(*lexer);
+        next_token = peek_token(*script);
         if next_token.type == {
           case .OPEN_BRACE;
             node.value = alloc_node(*script, Node_Object, loc = next_token.location);
             node.value.(*Node_Object).parent = node;
-            node.location = get_token(*lexer).location;
+            node.location = get_token(*script).location;
             
           case .OPEN_BRACKET;
             node.value = alloc_node(*script, Node_Array, loc = next_token.location);
             node.value.(*Node_Object).parent = node;
-            node.location = get_token(*lexer).location;
+            node.location = get_token(*script).location;
             
           case;
             node.value = my_parse_expression(*script, 0);
@@ -146,12 +152,12 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
                 log("asl;kdjfalskjdf");
                 log(format_error(*script));
             }
-            next_token := peek_token(*lexer);
+            next_token := peek_token(*script);
             if next_token.type == {
               case .CLOSE_BRACE;
               case .CLOSE_BRACKET;
               case .EOF;
-              case .COMMA; get_token(*lexer);
+              case .COMMA; get_token(*script);
               case;
                 log("%:%,%: GON parse error: Unexpected % token, expected end of scope or expression delimiter.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type);
             }
@@ -635,15 +641,16 @@ make_reference :: (script: *Script, type: Reference_Type, path: string) -> *Node
 // Custom versions of parse_leaf and parse_binary are implemented here to remove some of the LS features which we do not want to use in GON.
 
 my_parse_leaf :: (using script: *Script) -> *Node {
-    token := get_token(*lexer);
+    token := get_token(script);
     
-    is_operator, operator_type, precedence := token_is_operator(token, expect_unary = true);
-    if is_operator && operator_type == .UNARY {
+    is_operator, operator_index := get_prefix_operator(script, token);
+    if is_operator {
+        _operator := get_operator(script, operator_index);
         // special cases, bit of a parsing hack for the field reference operators
         // maybe later we will add the ability to have comptime operators more generally
         if token.text == {
           case "$";
-            string_token := get_token(*lexer);
+            string_token := get_token(script);
             if string_token.type != .STRING {
                 set_parse_error(script, "Expected a path string after node reference operator.", loc = string_token.location);
                 return null;
@@ -651,7 +658,7 @@ my_parse_leaf :: (using script: *Script) -> *Node {
             return make_reference(script, .VALUE, string_token.text);
             
           case "&";
-            string_token := get_token(*lexer);
+            string_token := get_token(script);
             if string_token.type != .STRING {
                 set_parse_error(script, "Expected a path string after node reference operator.", loc = string_token.location);
                 return null;
@@ -659,14 +666,14 @@ my_parse_leaf :: (using script: *Script) -> *Node {
             return make_reference(script, .INDEX, string_token.text);
         }
         
-        left := my_parse_expression(script, precedence);
+        left := my_parse_expression(script, _operator.precedence);
         if left == null  return null;
-        return make_unary_operation(script, token, left);
+        return make_operation(script, token, operator_index, left, null);
     }
     
     if token.type == {
       case .DOT;
-        token_after_dot := get_token(*lexer);
+        token_after_dot := get_token(script);
         if token_after_dot.type == .IDENTIFIER {
             identifier := make_identifier(script, token_after_dot);
             return make_dot(script, token, null, identifier);
@@ -681,7 +688,7 @@ my_parse_leaf :: (using script: *Script) -> *Node {
         if expression == null  return null;
         expression.flags |= .PARENTHESIZED;
         
-        close_paren_token := get_token(*lexer);
+        close_paren_token := get_token(script);
         if close_paren_token.type != .CLOSE_PAREN {
             set_parse_error(script, "Expected a closing paren for open paren at %.", open_paren_location, loc = close_paren_token.location);
             return null;
@@ -725,18 +732,18 @@ my_parse_leaf :: (using script: *Script) -> *Node {
             return null;
         }
         
-        open_paren_token := get_token(*lexer);
+        open_paren_token := get_token(script);
         if open_paren_token.type != .OPEN_PAREN {
             set_parse_error(script, "Expected an open paren after directive name!\n", loc = open_paren_token.location);
             return null;
         }
         
-        if !expect_token_type(*lexer, .CLOSE_PAREN) {
+        if !expect_token_type(script, .CLOSE_PAREN) {
             expressions, ok := parse_comma_separated_expressions(script,, temp);
             if !ok  return null;
             directive.arguments = array_copy(expressions,, LS.get_pool_allocator(*script.pool));
             
-            close_paren_token := get_token(*lexer);
+            close_paren_token := get_token(script);
             if close_paren_token.type != .CLOSE_PAREN {
                 set_parse_error(script, "Expected a closing paren after arguments of directive. Instead we saw %\n", close_paren_token.text, loc = close_paren_token.location);
                 return null;
@@ -758,26 +765,26 @@ my_parse_leaf :: (using script: *Script) -> *Node {
 }
 
 my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node {
-    token := peek_token(*lexer);
+    token := peek_token(script);
     
     // In addition to normal binary operators, we have a few binary-operator-like constructs that have essentially infinite operator precedence.
     // These are open parenthesis for procedure calls, dot for struct member access and cast, and open bracket for array indexing.
     if token.type == {
       case .OPEN_PAREN;
-        get_token(*lexer);
+        get_token(script);
         arg_exprs, ok := parse_procedure_arguments(script);
         if !ok  return null;
         return make_procedure_call(script, token, left, arg_exprs);
         
         
       case .DOT;
-        dot_token := get_token(*lexer);
+        dot_token := get_token(script);
         
-        token_after_dot := get_token(*lexer);
+        token_after_dot := get_token(script);
         if token_after_dot.type == {
           case .OPEN_PAREN;
             type_expr := my_parse_expression(script, 0);
-            close_paren := get_token(*lexer);
+            close_paren := get_token(script);
             if close_paren.type != .CLOSE_PAREN {
                 set_parse_error(script, "Unexpected token '%' in cast type expression. Expected a closing paren.", close_paren.type, loc = close_paren.location);
                 return null;
@@ -794,29 +801,27 @@ my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node 
         
         
       case .OPEN_BRACKET;
-        open_bracket_token := get_token(*lexer);
+        open_bracket_token := get_token(script);
         
         indexing_expr := my_parse_expression(script, 0);
         if indexing_expr == null  return null;
-        if !expect_token_type(*lexer, .CLOSE_BRACKET)  return null;
+        if !expect_token_type(script, .CLOSE_BRACKET)  return null;
         
         return make_subscript(script, open_bracket_token, left, indexing_expr);
     }
     
     // We only consume the binary operator here if it is of a higher precedence than the previous binary operator.
     // If we hit a binary operator but its precedence is too low, we return left back to caller.
-    is_operator, operator_type, precedence := token_is_operator(token);
-    if is_operator && operator_type != .UNARY {
-        if precedence <= min_prec  return left;
-        operator_token := get_token(*lexer);
+    is_operator, operator_index := get_binary_operator(script, token);
+    if is_operator {
+        _operator := get_operator(script, operator_index);
+        if _operator.precedence <= min_prec  return left;
         
-        right := my_parse_expression(script, precedence);
+        operator_token := get_token(script);
+        right := my_parse_expression(script, _operator.precedence);
         if right == null  return null;
         
-        operation := make_operation(script, operator_token, operator_type, left, right);
-        if operator_type == .ASSIGNMENT then operation.flags |= .MUST_BE_STATEMENT_ROOT;
-        
-        return operation;
+        return make_operation(script, operator_token, operator_index, left, right);
     }
     
     return left;
