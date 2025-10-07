@@ -62,7 +62,7 @@ process_data_bindings :: (parser: *Parser) -> bool {
     }
     for fields {
         evaluate_node(parser, it);
-        if !!parser.error  return false;
+        if LS.has_error(parser)  return false;
     }
     return true;
 }
@@ -459,7 +459,7 @@ evaluation_callback :: (
         if reference.reference_type == {
           case .VALUE; 
             evaluate_node(xx script, reference.resolved_field);
-            if !!script.error  return Null_Any;
+            if has_error(script)  return Null_Any;
             result = reference.resolved_field.binding;
             
           case .INDEX; 
@@ -488,14 +488,14 @@ evaluation_callback :: (
         if io_data && io_data.parse_proc && field.value.value_type == xx string {
             temp_string: string;
             evaluate_node(script, field.value, *temp_string);
-            if !!script.error  return Null_Any;
+            if has_error(script)  return Null_Any;
             
             ok := io_data.parse_proc(field.binding, temp_string);
             return ifx ok then Void_Any else Null_Any;
         }
         
         evaluate_node(script, field.value, field.binding.value_pointer);
-        if !!script.error  return Null_Any;
+        if has_error(script)  return Null_Any;
         if field.binding.type.type == .STRING {
             field.binding.value_pointer.(*string).* = copy_string(field.binding.value_pointer.(*string).*);
         }
@@ -508,7 +508,7 @@ evaluation_callback :: (
         object := node.(*Node_Object);
         for object.fields {
             evaluate_node(script, it);
-            if !!script.error  return Null_Any;
+            if has_error(script)  return Null_Any;
         }
         return object.parent.binding;
     }
