@@ -459,7 +459,7 @@ evaluation_callback :: (
         if reference.reference_type == {
           case .VALUE; 
             evaluate_node(xx script, reference.resolved_field);
-            if has_error(script)  return Null_Any;
+            if has_error(script)  return NULL_ANY;
             result = reference.resolved_field.binding;
             
           case .INDEX; 
@@ -480,7 +480,7 @@ evaluation_callback :: (
         
         if field.binding.type == null {
             log("binding was null for node at %!", node.location);
-            return Void_Any;
+            return VOID_ANY;
         }
         
         // NOTE: can only use a parse proc when the value type is string
@@ -488,18 +488,18 @@ evaluation_callback :: (
         if io_data && io_data.parse_proc && field.value.value_type == xx string {
             temp_string: string;
             evaluate_node(script, field.value, *temp_string);
-            if has_error(script)  return Null_Any;
+            if has_error(script)  return NULL_ANY;
             
             ok := io_data.parse_proc(field.binding, temp_string);
-            return ifx ok then Void_Any else Null_Any;
+            return ifx ok then VOID_ANY else NULL_ANY;
         }
         
         evaluate_node(script, field.value, field.binding.value_pointer);
-        if has_error(script)  return Null_Any;
+        if has_error(script)  return NULL_ANY;
         if field.binding.type.type == .STRING {
             field.binding.value_pointer.(*string).* = copy_string(field.binding.value_pointer.(*string).*);
         }
-        return Void_Any;
+        return VOID_ANY;
         
         
       case Node_Array; #through;
@@ -508,12 +508,12 @@ evaluation_callback :: (
         object := node.(*Node_Object);
         for object.fields {
             evaluate_node(script, it);
-            if has_error(script)  return Null_Any;
+            if has_error(script)  return NULL_ANY;
         }
         return object.parent.binding;
     }
     
-    return Null_Any;
+    return NULL_ANY;
 }
 
 typechecking_callback :: (
