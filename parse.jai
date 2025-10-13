@@ -20,11 +20,11 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
         .{ .PREFIX, "$",  8, "" },
     );
     
-    parser.script.my_parse_leaf   = my_parse_leaf;
-    parser.script.my_parse_binary = my_parse_binary;
+    parser.my_parse_leaf        = my_parse_leaf;
+    parser.my_parse_binary      = my_parse_binary;
+    parser.typecheck_callback   = typechecking_callback;
+    parser.my_evaluate_node     = my_evaluate_node;
     
-    parser.script.typecheck_callback = typechecking_callback;
-    parser.script.execute_callback  = execution_callback;
     register_common_types(*parser.script);
     
     init_lexer(parser, file, location = .{ file_path, 1, 1 });
@@ -61,7 +61,8 @@ process_data_bindings :: (parser: *Parser) -> bool {
         if !typecheck_node(parser, it)  return false;
     }
     for fields {
-        if !execute_node(parser, it)  return false;
+        parser.my_evaluate_node(parser, it);
+        if has_error(parser)  return false;
     }
     return true;
 }
@@ -148,7 +149,6 @@ construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
           case;
             node.value = my_parse_expression(*script, 0);
             if !node.value {
-                log("asl;kdjfalskjdf");
                 log(format_error(*script));
             }
             next_token := peek_token(*script);
@@ -444,27 +444,15 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
 }
 
 // NOTE: Since fields all store their own bindings, we have no need to use the standard hint_storage mechanism for fields and objects.
-execution_callback :: (script: *Script, node: *Node, provided_storage: *void = null, flags := Execution_Flags.NONE) -> bool {
-    push_result :: (node: *Node, any: Any) -> bool #expand {
+my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = null, flags := Execution_Flags.NONE) -> Any {
+    return_result :: (node: *Node, any: Any) -> bool #expand {
         if provided_storage {
             memcpy(provided_storage, any.value_pointer, any.type.runtime_size);
-            return true;
+            `return Any.{ node.value_type, provided_storage };
         }
-        
         result := push(*script.stack, any.value_pointer, any.type.runtime_size, should_push_by_pointer(node));
         if !result  set_execution_error(script, "Ran out of space on stack!", node = null);
-        return result != null;
-    }
-    
-    get_result_storage :: (node: *Node) -> *void #expand {
-        if provided_storage  return provided_storage;
-        
-        result := push(*script.stack, null, node.value_type.runtime_size);
-        if !result {
-            set_execution_error(script, "Ran out of space on stack!", node = null);
-            `return false;
-        }
-        return result;
+        `return result;
     }
     
     if node.node_type == {
@@ -473,57 +461,58 @@ execution_callback :: (script: *Script, node: *Node, provided_storage: *void = n
         
         if reference.reference_type == {
           case .VALUE;
-            if !execute_node(script, reference.resolved_field)  return false;
-            push_result(node, reference.resolved_field.binding);
-            return true;
+            evaluate_node_or_return(script, reference.resolved_field);
+            return_result(node, reference.resolved_field.binding);
             
           case .INDEX; 
-            push_result(node, to_any(*reference.resolved_field_index));
-            return true;
+            return_result(node, to_any(*reference.resolved_field_index));
         }
         assert(false, "Unhandled reference type.");
         
         
+        // NOTE: Node_Field does not itself push anything, it's more like an assignment statement or declaration in that sense
       case Node_Field;
-        // NOTE: node_field does not itself push anything, it's more like an assignment statement or declaration in that sense
         assert(provided_storage == null);
         field := node.(*Node_Field);
-        
-        if field.field_flags & .EVALUATED  return true;
+                
+        if field.field_flags & .EVALUATED  return VOID_ANY;
         defer field.field_flags |= .EVALUATED;
         
         if field.binding.type == null {
             log("binding was null for node at %!", node.location);
-            return true;
+            return VOID_ANY;
         }
         
         // NOTE: can only use a parse proc when the value type is string
         io_data := get_io_data(field.binding.type);
         if io_data && io_data.parse_proc && field.value.value_type == xx string {
             temp_string: string;
-            if !execute_node(script, field.value, *temp_string)  return false;
+            evaluate_node_or_return(script, field.value, *temp_string);
             
-            return io_data.parse_proc(field.binding, temp_string);
+            if !io_data.parse_proc(field.binding, temp_string) {
+                set_execution_error(script, "io_data.parse_proc returned false for field '%' with value '%'.", field.name, temp_string, node = node);
+                return NULL_ANY;
+            }
+            return VOID_ANY;
         }
         
-        if !execute_node(script, field.value, field.binding.value_pointer)  return false;
+        evaluate_node_or_return(script, field.value, field.binding.value_pointer);
         if field.binding.type.type == .STRING {
             field.binding.value_pointer.(*string).* = copy_string(field.binding.value_pointer.(*string).*);
         }
-        return true;
+        return VOID_ANY;
         
         
       case Node_Array; #through;
       case Node_Object;
         assert(node.scope.node_type == Node_Field, "%, %", node.scope.node_type, node.scope == script.ast_root);
         object := node.(*Node_Object);
-        for object.fields  if !execute_node(script, it)  return false;
-        
-        push_result(object, object.parent.binding);
-        return true;
+        for object.fields  evaluate_node_or_return(script, it);
+        return_result(object, object.parent.binding);
     }
     
-    return false;
+    // the node wasn't any of our special types, so default to the standard evaluate_node
+    return LS.evaluate_node(script, node, provided_storage, flags);
 }
 
 typechecking_callback :: (
