@@ -24,7 +24,7 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
     parser.script.my_parse_binary = my_parse_binary;
     
     parser.script.typecheck_callback = typechecking_callback;
-    parser.script.evaluate_callback  = evaluation_callback;
+    parser.script.execute_callback  = execution_callback;
     register_common_types(*parser.script);
     
     init_lexer(parser, file, location = .{ file_path, 1, 1 });
@@ -61,8 +61,7 @@ process_data_bindings :: (parser: *Parser) -> bool {
         if !typecheck_node(parser, it)  return false;
     }
     for fields {
-        evaluate_node(parser, it);
-        if LS.has_error(parser)  return false;
+        if !execute_node(parser, it)  return false;
     }
     return true;
 }
@@ -445,75 +444,86 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
 }
 
 // NOTE: Since fields all store their own bindings, we have no need to use the standard hint_storage mechanism for fields and objects.
-evaluation_callback :: (
-    script:         *Script, 
-    node:           *Node,
-    hint_storage:   *void    = null,
-    explicit_call := false
-) -> Any {
+execution_callback :: (script: *Script, node: *Node, provided_storage: *void = null, flags := Execution_Flags.NONE) -> bool {
+    push_result :: (node: *Node, any: Any) -> bool #expand {
+        if provided_storage {
+            memcpy(provided_storage, any.value_pointer, any.type.runtime_size);
+            return true;
+        }
+        
+        result := push(*script.stack, any.value_pointer, any.type.runtime_size, should_push_by_pointer(node));
+        if !result  set_execution_error(script, "Ran out of space on stack!", node = null);
+        return result != null;
+    }
+    
+    get_result_storage :: (node: *Node) -> *void #expand {
+        if provided_storage  return provided_storage;
+        
+        result := push(*script.stack, null, node.value_type.runtime_size);
+        if !result {
+            set_execution_error(script, "Ran out of space on stack!", node = null);
+            `return false;
+        }
+        return result;
+    }
+    
     if node.node_type == {
       case Node_Reference;
         reference := node.(*Node_Reference).*;
         
-        result: Any;
         if reference.reference_type == {
-          case .VALUE; 
-            evaluate_node(xx script, reference.resolved_field);
-            if has_error(script)  return NULL_ANY;
-            result = reference.resolved_field.binding;
+          case .VALUE;
+            if !execute_node(script, reference.resolved_field)  return false;
+            push_result(node, reference.resolved_field.binding);
+            return true;
             
           case .INDEX; 
-            result = to_any(*reference.resolved_field_index);
+            push_result(node, to_any(*reference.resolved_field_index));
+            return true;
         }
-        if hint_storage != null {
-            memcpy(hint_storage, result.value_pointer, result.type.runtime_size);
-        }
-        return result;
+        assert(false, "Unhandled reference type.");
         
         
       case Node_Field;
-        assert(hint_storage == null);
+        // NOTE: node_field does not itself push anything, it's more like an assignment statement or declaration in that sense
+        assert(provided_storage == null);
         field := node.(*Node_Field);
         
-        if field.field_flags & .EVALUATED  return field.binding;
+        if field.field_flags & .EVALUATED  return true;
         defer field.field_flags |= .EVALUATED;
         
         if field.binding.type == null {
             log("binding was null for node at %!", node.location);
-            return VOID_ANY;
+            return true;
         }
         
         // NOTE: can only use a parse proc when the value type is string
         io_data := get_io_data(field.binding.type);
         if io_data && io_data.parse_proc && field.value.value_type == xx string {
             temp_string: string;
-            evaluate_node(script, field.value, *temp_string);
-            if has_error(script)  return NULL_ANY;
+            if !execute_node(script, field.value, *temp_string)  return false;
             
-            ok := io_data.parse_proc(field.binding, temp_string);
-            return ifx ok then VOID_ANY else NULL_ANY;
+            return io_data.parse_proc(field.binding, temp_string);
         }
         
-        evaluate_node(script, field.value, field.binding.value_pointer);
-        if has_error(script)  return NULL_ANY;
+        if !execute_node(script, field.value, field.binding.value_pointer)  return false;
         if field.binding.type.type == .STRING {
             field.binding.value_pointer.(*string).* = copy_string(field.binding.value_pointer.(*string).*);
         }
-        return VOID_ANY;
+        return true;
         
         
       case Node_Array; #through;
       case Node_Object;
         assert(node.scope.node_type == Node_Field, "%, %", node.scope.node_type, node.scope == script.ast_root);
         object := node.(*Node_Object);
-        for object.fields {
-            evaluate_node(script, it);
-            if has_error(script)  return NULL_ANY;
-        }
-        return object.parent.binding;
+        for object.fields  if !execute_node(script, it)  return false;
+        
+        push_result(object, object.parent.binding);
+        return true;
     }
     
-    return NULL_ANY;
+    return false;
 }
 
 typechecking_callback :: (
