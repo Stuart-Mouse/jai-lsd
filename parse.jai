@@ -527,6 +527,9 @@ typechecking_callback :: (
       case Node_Field;
         field := node.(*Node_Field);
         
+        // we set value_type for the sake of typechecking, but Node_Field does not actually return any value when executed.
+        field.flags |= .VALUE_TYPE_IS_NOMINAL;
+        
         if field.binding.type == null {
             field.value_type = type_info(void);
             return field.value_type;
