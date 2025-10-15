@@ -741,8 +741,8 @@ my_parse_leaf :: (using script: *Script) -> *Node {
         }
         
         if !expect_token_type(script, .CLOSE_PAREN) {
-            expressions, ok := parse_comma_separated_expressions(script,, temp);
-            if !ok  return null;
+            expressions := parse_comma_separated_expressions(script,, temp);
+            if !expressions  return null;
             directive.arguments = array_copy(expressions,, LS.get_pool_allocator(*script.pool));
             
             close_paren_token := get_token(script);
