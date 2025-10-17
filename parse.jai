@@ -20,10 +20,10 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
         .{ .PREFIX, "$",  8, "" },
     );
     
-    parser.my_parse_leaf        = my_parse_leaf;
-    parser.my_parse_binary      = my_parse_binary;
-    parser.typecheck_callback   = typechecking_callback;
-    parser.my_evaluate_node     = my_evaluate_node;
+    parser.my_parse_leaf     = my_parse_leaf;
+    parser.my_parse_binary   = my_parse_binary;
+    parser.my_typecheck_node = my_typecheck_node;
+    parser.my_evaluate_node  = my_evaluate_node;
     
     register_common_types(*parser.script);
     
@@ -58,7 +58,7 @@ add_data_bindings_to_dom :: (parser: *Parser, bindings: [] struct { binding: Any
 process_data_bindings :: (parser: *Parser) -> bool {
     fields := get_fields(parser.dom_root);
     for fields {
-        if !typecheck_node(parser, it)  return false;
+        if !parser.my_typecheck_node(parser, it)  return false;
     }
     for fields {
         parser.my_evaluate_node(parser, it);
@@ -515,7 +515,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
     return LS.evaluate_node(script, node, provided_storage, flags);
 }
 
-typechecking_callback :: (
+my_typecheck_node :: (
     using script:   *Script, // in theroy we could also cast this to our Parser...
     node:           *Node, 
     check_flags:    Typechecking_Flags = .NONE,
@@ -548,7 +548,7 @@ typechecking_callback :: (
         defer_restore(*current_scope);
         current_scope = field;
         
-        value_type := typecheck_node(script, field.value, hint_type = field.binding.type);
+        value_type := my_typecheck_node(script, field.value, hint_type = field.binding.type);
         if !value_type  return null;
         
         // NOTE: if an io data parse proc is present, then the value_type of the RHS can always be a string
@@ -574,7 +574,7 @@ typechecking_callback :: (
         }
         object.value_type = hint_type;
         for object.fields {
-            if !typecheck_node(script, it)  return null;
+            if !my_typecheck_node(script, it)  return null;
         }
         return object.value_type;
         
@@ -588,7 +588,7 @@ typechecking_callback :: (
         }
         array.value_type = hint_type;
         for array.fields {
-            if !typecheck_node(script, it)  return null;
+            if !my_typecheck_node(script, it)  return null;
         }
         return array.value_type;
         
@@ -612,7 +612,7 @@ typechecking_callback :: (
         }
         
         // jump to referenced node
-        if !typecheck_node(script, reference.resolved_field)  return null;
+        if !my_typecheck_node(script, reference.resolved_field)  return null;
         
         if reference.reference_type == {
           case .VALUE; reference.value_type = reference.resolved_field.binding.type;
@@ -625,11 +625,10 @@ typechecking_callback :: (
             }
         }
         return reference.value_type;
-        
-      case;
-        // set no error and let normal typechecking handle all other node types
-        return null;
     }
+    
+    // defer to default typecheck_node if it wasn't one out our special node types
+    return typecheck_node(script, node, check_flags, hint_type);
 }
 
 
