@@ -180,10 +180,17 @@ append_data_node :: (parent: *Node_Field, path: string, data_binding: Any, prepe
 }
 
 append_child_node :: (parent: *Node_Field, node: *Node_Field, prepend := false) -> *Node_Field {
-    assert(is_aggregate(parent));
-    fields := get_fields(parent);
+    return append_child_node(parent.value.(*Node_Object), node, prepend);
+}
+
+append_child_node :: (array: *Node_Array, node: *Node_Field, prepend := false) -> *Node_Field {
+    return append_child_node(array.(*Node_Object), node, prepend);
+}
+append_child_node :: (object: *Node_Object, node: *Node_Field, prepend := false) -> *Node_Field {
+    assert(object.node_type == Node_Object || object.node_type == Node_Array, "Node type was %", node.node_type);
+    fields := *object.fields; // NOTE: this is valid for both Node_Object and Node_Array
     
-    node.parent = parent;
+    node.parent = object.parent;
     fields.count += 1;
     
     if prepend {

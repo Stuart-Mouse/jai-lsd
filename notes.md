@@ -466,3 +466,30 @@ This would already be helpful for defining certain object members based on other
 It would also be helpful for modders in the future to simply apply patches/merges on existing lsd data files
     not sure exactly how we make the file-level semantics work yet, but that would be the next logical step
 
+
+## Aggregate literals
+
+syntax:
+```
+field_name: Optional_Type_Name {
+    
+}
+```
+
+First step will be refactoring parsing of DOM so that we can parse objects/arrays inline with other expressions
+
+If we see an open brace or bracket after any expression, we will assume that that expression must be some explicit type for the following object/array literal
+
+problem:
+    this syntax will not work for arrays, since it would be indistinguishable from an array indexing epxression (unless we do some substantial lookahead)
+    so, perhaps we should require the use of a dot in between a type expression and an object/array literal
+    I don't want to require a unary . before these aggr literals if no type is provided though
+
+
+another problem:
+    we are breaking a prior assumption that a node_object or node_array would have a 1:1 link to a Node_Field
+    this now means that we can't exactly use the exact same parent/child structure for these which we had before.
+    And secondly, we will need to make sure that we implement any patch/merge operators as directives so that we can reduce the operands down to a single result, which can then be properly bound to the current parent node_field
+    
+
+

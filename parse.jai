@@ -22,7 +22,7 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
     
     parser.my_parse_leaf     = my_parse_leaf;
     parser.my_parse_binary   = my_parse_binary;
-    parser.my_typecheck_node = my_typecheck_node;
+    parser.my_typecheck_node = xx my_typecheck_node;
     parser.my_evaluate_node  = my_evaluate_node;
     
     register_common_types(*parser.script);
@@ -72,118 +72,15 @@ process_data_bindings :: (parser: *Parser) -> bool {
     Although, if we ever remove the pointer to parent from DOM nodes, we may go ahead and just make this recursive.
 */
 construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
-    push_allocator(LS.get_pool_allocator(*script.pool));
-    
-    current_parent = null;
-    dom_root       = alloc_node(*script, Node_Field);
+    dom_root       = alloc_node(parser, Node_Field);
     current_parent = dom_root;
-    dom_root.value = alloc_node(*script, Node_Object);
-    current_parent = dom_root;
+    dom_root.value = alloc_node(parser, Node_Object);
     
-    while parse_loop := (current_parent != null) {
-        name_token: Token;
-        
-        next_token := peek_token(*script);
-        if next_token.type == .EOF {
-            if current_parent != dom_root {
-                log("%:%,%: GON parse error: Unexpected EOF.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number);
-                return false;
-            }
-            break parse_loop;
-        }
-        
-        if next_token.type == {
-          case .IDENTIFIER; #through;
-          case .STRING;
-            if is_object(current_parent) {
-                name_token = get_token(*script);
-                next_token = get_token(*script);
-                if next_token.type != .COLON {
-                    log("%:%,%: GON parse error: Expected colon after field name '%', got % \"%\"", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, name_token.text, next_token.type, next_token.text);
-                    return false;
-                }
-            }
-            
-          case .CLOSE_BRACE;
-            if !is_object(current_parent) {
-                log("%:%,%: GON parse error: Unexpected closing brace, parent is not an object.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number);
-                return false;
-            }
-            get_token(*script);
-            expect_token_type(*script, .COMMA);
-            current_parent = current_parent.parent;
-            continue;
-            
-          case .CLOSE_BRACKET;
-            if !is_array(current_parent) {
-                log("%:%,%: GON parse error: Unexpected closing bracket, parent is not an array.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number);
-                return false;
-            }
-            get_token(*script);
-            expect_token_type(*script, .COMMA);
-            current_parent = current_parent.parent;
-            continue;
-        }
-        
-        // need a better check, will be trivial after refactoring parsing later...
-        if is_object(current_parent) && !name_token.type {
-            set_parse_error(parser, "Expected a field name, but saw this instead: %", next_token.text);
-            return false;
-        }
-        
-        node := alloc_node(*script, Node_Field, loc = next_token.location);
-        node.parent = current_parent;
-        
-        next_token = peek_token(*script);
-        if next_token.type == {
-          case .OPEN_BRACE;
-            node.value = alloc_node(*script, Node_Object, loc = next_token.location);
-            node.value.(*Node_Object).parent = node;
-            node.location = get_token(*script).location;
-            
-          case .OPEN_BRACKET;
-            node.value = alloc_node(*script, Node_Array, loc = next_token.location);
-            node.value.(*Node_Object).parent = node;
-            node.location = get_token(*script).location;
-            
-          case;
-            node.value = my_parse_expression(*script, 0);
-            if !node.value {
-                log(format_error(*script));
-            }
-            next_token := peek_token(*script);
-            if next_token.type == {
-              case .CLOSE_BRACE;
-              case .CLOSE_BRACKET;
-              case .EOF;
-              case .COMMA; get_token(*script);
-              case;
-                log("%:%,%: GON parse error: Unexpected % token, expected end of scope or expression delimiter.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type);
-            }
-        }
-        
-        if node.value == null {
-            log("GON parse error: failed to parse expression @ %", node.location);
-            log(format_error(*script));
-            log("next_token: %", next_token);
-            return false;
-        }
-        
-        if !is_array(current_parent) {
-            node.name     = name_token.text;
-            node.location = name_token.location;
-        } else {
-            node.location = node.value.location;
-        }
-        
-        append_child_node(current_parent, node);
-        if node.value.node_type == {
-          case Node_Object; #through;
-          case Node_Array;  
-            current_parent = node;
-        }
+    while !expect_token_type(*script, .EOF) {
+        field := parse_field(parser, true);
+        if !field  return false;
+        append_child_node(dom_root.value.(*Node_Object), field);
     }
-    
     return true;
 }
 
@@ -348,7 +245,7 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
             
             /* 
                 TODO: 
-                GON objects can only validly be bound to arrays when the element type is a struct,
+                LSD objects can only validly be bound to arrays when the element type is a struct,
                 or if it is an indexed array (where the name of each field is the index to which the value will be stored).
                 So, we should perform a check to ensure that these conditions are met, else return an error.
                 The user will have to state explicitly that they want to parse a given array binding as an indexed array, otherwise there is some ambiguity as to how to handle ths situation.
@@ -445,8 +342,17 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
 
 // NOTE: Since fields all store their own bindings, we have no need to use the standard hint_storage mechanism for fields and objects.
 my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = null, flags := Execution_Flags.NONE) -> Any {
+    // log("evaluating % @ %", node.node_type, node);
+    // log("provided_storage: %", provided_storage);
+    // if node.node_type == Node_Field { 
+    //     log("field: %", node.(*Node_Field).name);
+    //     log("binding: %, %", as_type(node.(*Node_Field).binding.type), node.(*Node_Field).binding.value_pointer);
+    // }
+    
+    
     return_result :: (node: *Node, any: Any) -> bool #expand {
         if provided_storage {
+            // log("copying Any.{ %, % } for node % -> provided storage %", as_type(any.type), any.value_pointer, node, provided_storage);
             memcpy(provided_storage, any.value_pointer, any.type.runtime_size);
             `return Any.{ node.value_type, provided_storage };
         }
@@ -479,7 +385,11 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         defer field.field_flags |= .EVALUATED;
         
         if field.binding.type == null {
-            log("binding was null for node at %!", node.location);
+            log("binding.type was null for node at %!", node.location);
+            return VOID_ANY;
+        }
+        if field.binding.value_pointer == null {
+            log("binding.value_pointer was null for node at %!", node.location);
             return VOID_ANY;
         }
         
@@ -508,6 +418,8 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         assert(node.scope.node_type == Node_Field, "%, %", node.scope.node_type, node.scope == script.ast_root);
         object := node.(*Node_Object);
         for object.fields  evaluate_node_or_return(script, it);
+        
+        // log("parent: % %", object.parent, object.parent.(*Node_Field).*);
         return_result(object, object.parent.binding);
     }
     
@@ -516,7 +428,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
 }
 
 my_typecheck_node :: (
-    using script:   *Script, // in theroy we could also cast this to our Parser...
+    parser:         *Parser,
     node:           *Node, 
     check_flags:    Typechecking_Flags = .NONE,
     hint_type:      *Type_Info         = null
@@ -539,16 +451,16 @@ my_typecheck_node :: (
         //      so that we know if we visit it again, we have gone in a loop.
         // TODO: would be better if we explicitly track the dependency chain so that we can print a better error here
         if field.field_flags & .PENDING_TYPECHECK {
-            set_general_error(script, "Cyclic dependency on node '%'.", format_node_path(field,, temp), loc = node.location);
+            set_general_error(parser, "Cyclic dependency on node '%'.", format_node_path(field,, temp), loc = node.location);
             return null;
         }
         field.field_flags |= .PENDING_TYPECHECK;
         defer field.field_flags &= ~.PENDING_TYPECHECK;
         
-        defer_restore(*current_scope);
-        current_scope = field;
+        defer_restore(*parser.current_parent);
+        parser.current_parent = field;
         
-        value_type := my_typecheck_node(script, field.value, hint_type = field.binding.type);
+        value_type := my_typecheck_node(parser, field.value, hint_type = field.binding.type);
         if !value_type  return null;
         
         // NOTE: if an io data parse proc is present, then the value_type of the RHS can always be a string
@@ -557,7 +469,7 @@ my_typecheck_node :: (
         can_use_io_data_parse_proc := io_data != null && io_data.parse_proc != null && value_type == xx string;
         
         if field.binding.type != value_type && !can_use_io_data_parse_proc {
-            set_general_error(script, "Mismatched types on field binding and value expression. Expected %, got %.", as_type(field.binding.type), as_type(value_type), loc = node.location);
+            set_general_error(parser, "Mismatched types on field binding and value expression. Expected %, got %.", as_type(field.binding.type), as_type(value_type), loc = node.location);
             return null;
         }
         
@@ -569,12 +481,12 @@ my_typecheck_node :: (
         object := node.(*Node_Object);
         
         if hint_type == null {
-            set_typecheck_error(script, "Missing type hint on Node_Object.", node = node, type = .MISSING_TYPE_HINT, loc = node.location);
+            set_typecheck_error(parser, "Missing type hint on Node_Object.", node = node, type = .MISSING_TYPE_HINT, loc = node.location);
             return null;
         }
         object.value_type = hint_type;
         for object.fields {
-            if !my_typecheck_node(script, it)  return null;
+            if !my_typecheck_node(parser, it)  return null;
         }
         return object.value_type;
         
@@ -583,23 +495,23 @@ my_typecheck_node :: (
         array := node.(*Node_Array);
         
         if hint_type == null {
-            set_typecheck_error(script, "Missing type hint on Node_Array.", node = node, type = .MISSING_TYPE_HINT, loc = node.location);
+            set_typecheck_error(parser, "Missing type hint on Node_Array.", node = node, type = .MISSING_TYPE_HINT, loc = node.location);
             return null;
         }
         array.value_type = hint_type;
         for array.fields {
-            if !my_typecheck_node(script, it)  return null;
+            if !my_typecheck_node(parser, it)  return null;
         }
         return array.value_type;
         
         
       case Node_Reference;
         reference := node.(*Node_Reference);
-        field := script.current_scope.(*Node_Field);
+        field := parser.current_parent.(*Node_Field);
         
-        resolved_field, resolved_index := find_node_by_path(xx script, field.parent, reference.field_path);
+        resolved_field, resolved_index := find_node_by_path(xx parser, field.parent, reference.field_path);
         if resolved_field == null {
-            set_typecheck_error(script, "Unable to resolve referenced node path '%'.", reference.field_path, node = node, loc = node.location);
+            set_typecheck_error(parser, "Unable to resolve referenced node path '%'.", reference.field_path, node = node, loc = node.location);
             return null; 
         }
         reference.resolved_field = resolved_field;
@@ -607,12 +519,12 @@ my_typecheck_node :: (
         
         if reference.resolved_field.binding.value_pointer == null {
             // TODO: handle this case by creating temporary instance of hinted type?
-            set_general_error(script, "Referenced node '%' had no data binding!.", reference.field_path, loc = reference.location);
+            set_general_error(parser, "Referenced node '%' had no data binding!.", reference.field_path, loc = reference.location);
             return null;
         }
         
         // jump to referenced node
-        if !my_typecheck_node(script, reference.resolved_field)  return null;
+        if !my_typecheck_node(parser, reference.resolved_field)  return null;
         
         if reference.reference_type == {
           case .VALUE; reference.value_type = reference.resolved_field.binding.type;
@@ -628,7 +540,7 @@ my_typecheck_node :: (
     }
     
     // defer to default typecheck_node if it wasn't one out our special node types
-    return typecheck_node(script, node, check_flags, hint_type);
+    return typecheck_node(parser, node, check_flags, hint_type);
 }
 
 
@@ -639,7 +551,7 @@ make_reference :: (script: *Script, type: Reference_Type, path: string) -> *Node
     return ref;
 }
 
-// Custom versions of parse_leaf and parse_binary are implemented here to remove some of the LS features which we do not want to use in GON.
+// Custom versions of parse_leaf and parse_binary are implemented here to remove some of the LS features which we do not want to use in LSD.
 
 my_parse_leaf :: (using script: *Script) -> *Node {
     token := get_token(script);
@@ -653,7 +565,7 @@ my_parse_leaf :: (using script: *Script) -> *Node {
           case "$";
             string_token := get_token(script);
             if string_token.type != .STRING {
-                set_parse_error(script, "Expected a path string after node reference operator.", loc = string_token.location);
+                set_parse_error(script, "Expected a path string after node reference operator.", loc = token.location);
                 return null;
             }
             return make_reference(script, .VALUE, string_token.text);
@@ -661,7 +573,7 @@ my_parse_leaf :: (using script: *Script) -> *Node {
           case "&";
             string_token := get_token(script);
             if string_token.type != .STRING {
-                set_parse_error(script, "Expected a path string after node reference operator.", loc = string_token.location);
+                set_parse_error(script, "Expected a path string after node reference operator.", loc = token.location);
                 return null;
             }
             return make_reference(script, .INDEX, string_token.text);
@@ -678,9 +590,10 @@ my_parse_leaf :: (using script: *Script) -> *Node {
         if token_after_dot.type == .IDENTIFIER {
             identifier := make_identifier(script, token_after_dot);
             return make_dot(script, token, null, identifier);
+        } else {
+            set_parse_error(script, "Unexpected % token '%' after unary dot.", token_after_dot.type, token_after_dot.text, loc = token_after_dot.location);
+            return null;
         }
-        else set_parse_error(script, "Unexpected % token '%' after unary dot.", token_after_dot.type, token_after_dot.text, loc = token_after_dot.location);
-
         
       case .OPEN_PAREN;
         open_paren_location := token.location;
@@ -696,6 +609,19 @@ my_parse_leaf :: (using script: *Script) -> *Node {
         }
         return expression;
         
+      case .OPEN_BRACE;
+        object := alloc_node(script, Node_Object, loc = token.location);
+        object.(*Node_Object).parent = xx script.current_scope;
+        assert(script.current_scope.node_type == Node_Field);
+        if !parse_object_contents(xx script, object)  return null;
+        return object;
+        
+      case .OPEN_BRACKET;
+        array := alloc_node(script, Node_Array, loc = token.location);
+        array.(*Node_Array).parent = xx script.current_scope;
+        assert(script.current_scope.node_type == Node_Field);
+        if !parse_array_contents(xx script, array)  return null;
+        return array;
         
       case .TRUE;
         literal := alloc_node(script, Node_Literal, loc = token.location, trivia = token.trivia);
@@ -709,15 +635,15 @@ my_parse_leaf :: (using script: *Script) -> *Node {
         literal.number       = to_any_number(false);
         return literal;
         
-        
       case .NUMBER;
         return make_number_literal(script, token);
-        
         
       case .STRING;
         return make_string_literal(script, token);
         
-    
+      case .IDENTIFIER;
+        return make_identifier(script, token);
+        
       case .DIRECTIVE;
         directive := alloc_node(script, Node_Directive, loc = token.location, trivia = token.trivia);
         directive.name = token.text;
@@ -756,10 +682,6 @@ my_parse_leaf :: (using script: *Script) -> *Node {
             return null;
         }
         return directive;
-        
-        
-      case .IDENTIFIER;
-        return make_identifier(script, token);
     }
     
     return null;
@@ -826,4 +748,75 @@ my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node 
     }
     
     return left;
+}
+
+parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
+    node := alloc_node(parser, Node_Field);
+    node.parent = parser.current_parent;
+    parser.current_parent = node;
+    
+    if parent_is_object {
+        name_token := get_token(parser);
+        node.location = name_token.location;
+        
+        if name_token.type == {
+          case .IDENTIFIER; #through;
+          case .STRING;
+            node.name = name_token.text;
+            
+            next_token := get_token(parser);
+            if next_token.type != .COLON {
+                log("%:%,%: LSD parse error: Expected colon after field name '%', got % \"%\"", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, name_token.text, next_token.type, next_token.text);
+                return null;
+            }
+            
+          case;
+            set_parse_error(parser, "Expected a field name, but saw this instead: % (%)", name_token.text, name_token.type, node = node);
+            return null;
+        }
+    }
+    
+    node.value = parser.my_parse_expression(parser, 0);
+    
+    if node.value == null {
+        log("LSD parse error: failed to parse expression @ %", node.location);
+        log(format_error(parser));
+        return null;
+    }
+    // assert(node.value != null, "%: Node value was null, but no script error was set.", LS.get_location(node));
+    
+    if !parent_is_object {
+        node.location = node.value.location;
+    }
+    
+    next_token := peek_token(parser);
+    if next_token.type == {
+      case .CLOSE_BRACE;
+      case .CLOSE_BRACKET;
+      case .EOF;
+      case .COMMA; get_token(parser);
+      case;
+        log("%:%,%: LSD parse error: Unexpected % token, expected end of scope or expression delimiter.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type);
+    }
+    
+    parser.current_parent = node.parent;
+    return node;
+}
+
+parse_array_contents :: (using parser: *Parser, array: *Node_Array) -> bool {
+    while !expect_token_type(*script, .CLOSE_BRACKET) {
+        field := parse_field(parser, false);
+        if !field  return false;
+        append_child_node(array, field);
+    }
+    return true;
+}
+
+parse_object_contents :: (using parser: *Parser, object: *Node_Object) -> bool {
+    while !expect_token_type(*script, .CLOSE_BRACE) {
+        field := parse_field(parser, true);
+        if !field  return false;
+        append_child_node(object, field);
+    }
+    return true;
 }
