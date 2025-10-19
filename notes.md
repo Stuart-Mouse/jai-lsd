@@ -471,8 +471,8 @@ It would also be helpful for modders in the future to simply apply patches/merge
 
 syntax:
 ```
-field_name: Optional_Type_Name {
-    
+field_name: Optional_Type_Name.{
+    field_1:    5,
 }
 ```
 
@@ -491,5 +491,6 @@ another problem:
     this now means that we can't exactly use the exact same parent/child structure for these which we had before.
     And secondly, we will need to make sure that we implement any patch/merge operators as directives so that we can reduce the operands down to a single result, which can then be properly bound to the current parent node_field
     
-
+can we make comma after object/array optional again after introducing these new semantics?
+    seems like probably no, but we will see
 
