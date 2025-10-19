@@ -766,7 +766,7 @@ parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
             
             next_token := get_token(parser);
             if next_token.type != .COLON {
-                log("%:%,%: LSD parse error: Expected colon after field name '%', got % \"%\"", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, name_token.text, next_token.type, next_token.text);
+                set_parse_error(parser, "Expected colon after field name '%', got % \"%\"", name_token.text, next_token.type, next_token.text, node = node);
                 return null;
             }
             
@@ -796,7 +796,8 @@ parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
       case .EOF;
       case .COMMA; get_token(parser);
       case;
-        log("%:%,%: LSD parse error: Unexpected % token, expected end of scope or expression delimiter.", next_token.location.fully_pathed_filename, next_token.location.line_number, next_token.location.character_number, next_token.type);
+        set_parse_error(parser, "Unexpected % token, expected end of scope or expression delimiter.", next_token.type, node = node);
+        return null;
     }
     
     parser.current_parent = node.parent;
