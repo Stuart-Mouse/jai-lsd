@@ -41,124 +41,137 @@ serialize_dom_nodes_to_gon :: (using parser: *Parser, node: *Node_Field, builder
     if node.parent != null {
         in_array       = is_array(node.parent);
         is_first_child = node == get_fields(node.parent).first;
-        same_line      = (.SAME_LINE & node.parent.field_flags).(bool);      // check for sameline on parent, not self (we do that later)
+        same_line      = has_flag(node.parent.field_flags, .SAME_LINE); // check for sameline on parent, not self (we do that later)
     }
     
-    if (same_line || in_array) && !is_first_child
+    if (same_line || in_array) && !is_first_child {
         append(builder, ",");
-
+    }
     if same_line {
         append(builder, " ");
     } else {
         append(builder, "\n");
         for 0..indent-1  append(builder, INDENTATION_STRING);
     }
-
+    
     if !in_array {
-        append(builder, to_conformant_string(node.name,, temp));
+        append_gon_string(builder, node.name);
         append(builder, ": ");
     }
-
-    // For debugging, seeing type of data binding
-    // if node.binding.value_pointer {
-    //     print_to_builder(*builder, "(%) ", (cast(*Type) *node.binding.type).*);
-    // }
-
+    
+    if node.value == null {
+        // TODO: should assert that binding type is appropriate to be printed as a simple field value
+        if node.binding.type.type == .STRING {
+            append_gon_string(builder, node.binding.value_pointer.(*string).*);
+        } else {
+            print_to_builder(builder, "%", node.binding);
+        }
+    }
+    
     if is_aggregate(node) {
         // ensure that end of object/array gets printed on same line if sameline flag is set on self
-        same_line ||= (.SAME_LINE & node.field_flags).(bool);
+        same_line ||= has_flag(node.field_flags, .SAME_LINE);
         fields := get_fields(node);
-
+        
         _is_array := is_array(node);
         if _is_array && fields.first && do_sameline_for_type(fields.first.binding.type) {
             node.field_flags |= .SAME_LINE;
             same_line = true;
         }
-
+        
         append(builder, ifx _is_array then "[" else "{");
-
+        
         // recurse for children
         for fields  if !serialize_dom_nodes_to_gon(parser, it, builder, indent + 1)  return false;
-
+        
         if same_line {
             append(builder, " ");
         } else {
             append(builder, "\n");
             for 0..indent-1  append(builder, INDENTATION_STRING);
         }
-
+        
         append(builder, ifx _is_array then "]" else "}");
     } else {
-        if node.binding.type.type == .STRING {
-            append(builder, to_conformant_string(node.binding.value_pointer.(*string).*,, temp));
-        } else {
-            print_to_builder(builder, "%", node.binding);
-        }
+        print_node(parser, node.value, builder, indent);
     }
-
+    
     return true;
 }
 
-// determination is currently made based only on node's data binding and parent's data binding, but we will probably consider some other flags on the node later
-// the type set here is authoritative, so when we go to actually serialize a node later, it must be serializable as this type
-determine_node_type_for_serialization :: (node: *Node_Field) -> *Type_Info {
-    if node.binding.value_pointer == null  return .OBJECT;
+
+
+// TODO: maybe move to serialize.jai, inline determine_node_type_for_serialization and append_nodes_for_indirect_bindings
+append_data_node :: (parser: *Parser, parent: *Node_Field, path: string, data_binding: Any, prepend: bool = false) -> *Node_Field {    
+    node := append_node_with_path(parser, parent, path, prepend = prepend);
+    if node == null  return node;
     
-    io_data := get_io_data(node.binding.type);
+    io_data := get_io_data(data_binding.type);
+    if io_data && io_data.bind_proc 
+        then node.binding = io_data.bind_proc(data_binding);
+        else node.binding = data_binding;
     
-    type: Type;
+    assert(node.binding.value_pointer != null);
+    
+    io_data = get_io_data(node.binding.type);
+    
+    // TODO: handle unwrapping of variant types
+    
     if node.binding.type.type == {
       case .INTEGER; #through;
       case .FLOAT;   #through;
       case .STRING;  #through;
       case .ENUM;    #through;
       case .BOOL;
-        type = Node_Field;
+        // NOTE: currently leaving node.value null so that we know to serialize data binding directly instead
+        return node;
         
       case .ARRAY;
-        ti_array := node.binding.type.(*Type_Info_Array);
+        array := Any_Array.from(node.binding);
         
         // arrays of bytes/u8 are serialized as string
         // we will probably distinguish this later on u8 vs byte, where byte is serialized using some binary data blob
-        if ti_array.element_type.runtime_size == 1 {
-            type = Node_Field;
+        if array.element_type.runtime_size == 1 {
+            // NOTE: currently leaving node.value null so that we know to serialize data binding directly instead
+            return node;
         } else {
-            if io_data && (.AS_OBJECT | .ARRAY_INDEXED) & io_data.serialize.flags
-                then type = Node_Object;
-                else type = Node_Array;
+            if io_data {
+                if io_data.flags & .AS_OBJECT {
+                    node.value = alloc_node(parser, Node_Object);
+                    // need to verify that element type is struct and has io data defining name member
+                    return node;
+                }
+                if io_data.flags & .ARRAY_INDEXED {
+                    node.value = alloc_node(parser, Node_Object);
+                    for array {
+                        elem_name := tprint("%", it_index);
+                        append_data_node(parser, node, elem_name, it);
+                    }
+                    return node;
+                }
+            }
+            
+            node.value = alloc_node(parser, Node_Array);
+            for array  append_data_node(parser, node, "", it);
+            return node;
         }
         
       case .STRUCT;
-        if io_data && .AS_ARRAY & io_data.serialize.flags 
-            then type = Node_Array;
-            else type = Node_Object;
+        if io_data && io_data.flags & .AS_ARRAY {
+            node.value = alloc_node(parser, Node_Array);
+            iterate_struct_members(node.binding, .SKIP_CONSTANT | .SKIP_PLACE, #code {
+                append_data_node(parser, node, "", it);
+            });
+            return node;
+        }
+        
+        node.value = alloc_node(parser, Node_Object);
+        iterate_struct_members(node.binding, .SKIP_CONSTANT | .SKIP_PLACE, #code {
+            append_data_node(parser, node, it_info.name, it);
+        });
     }
     
-    return type.(*Type_Info);
-}
-
-append_nodes_for_indirect_bindings :: (node: *Node_Field) {
-    if node == null || node.binding.value_pointer == null  return;
-
-    if node.binding.type.type == {
-      case .STRUCT;
-        ti_struct := node.binding.type.(*Type_Info_Struct);
-        for ti_struct.members {
-            member_any := Any.{ it.type, node.binding.value_pointer + it.offset_in_bytes };
-            // figure out whether to prepend elems (will do for things that need to be attrs)
-            append_data_node(node, it.name, member_any);
-        }
-        return;
-
-      case .ARRAY;
-        array := make_any_array(node.binding.type);
-        for array {
-            // TODO: as indexed, as object
-            elem_name := tprint("%", it_index);
-            append_data_node(node, elem_name, it);
-        }
-        return;
-    }
+    return null;
 }
 
 do_sameline_for_type :: (ti: *Type_Info) -> bool {
@@ -168,29 +181,9 @@ do_sameline_for_type :: (ti: *Type_Info) -> bool {
         || ti.type == .ENUM;
 }
 
-
-is_escaped_char :: (char: u8) -> bool {
-    return char == #char "\\" || char == #char "\"";
-}
-
-to_conformant_string :: (s: string, force_quotes := false) -> string {
-    if s == ""  return copy_string("\"\"");
-
-    sb: String_Builder;
-
-    write_quotes := force_quotes || (s.count == 0) || !is_legal_identifier(s);
-
-    if write_quotes  append(*sb, "\"");
-
-    for c: s {
-        if c == 0  break;
-        if is_escaped_char(c) {
-            append(*sb, "\\");
-        }
-        append(*sb, c);
-    }
-
-    if write_quotes  append(*sb, "\"");
-
-    return builder_to_string(*sb);
+append_gon_string :: (builder: *String_Builder, text: string, quote_char: u8 = "\"") -> bool {
+    append(builder, quote_char);
+    ok := revert_escape_sequences(builder, text);
+    append(builder, quote_char);
+    return ok;
 }

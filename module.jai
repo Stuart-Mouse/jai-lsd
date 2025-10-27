@@ -40,6 +40,7 @@ load_and_parse_file :: (path: string, code: Code) -> bool #expand {
 #scope_module
 
 #import "Basic";
+#import "Math";
 #import "File";
 #import "Reflection";
 #import "String";

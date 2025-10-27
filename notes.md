@@ -494,3 +494,24 @@ another problem:
 can we make comma after object/array optional again after introducing these new semantics?
     seems like probably no, but we will see
 
+
+
+## Fixing serialization
+
+I never really made serialization work properly since splitting LSD from GON
+but having the ability to serialize properly would be quite useful at this point
+
+some difficulties:
+    should we implement all serialization in terms of some Lead Sheets my_serialize_node proc?
+        should we use trivia? and should we use default indentation when trivia not present?
+    when to serialize binding value directly vs using value expression?
+    need to respect bind proc when serializing 
+        needs to happen at node insertion time
+        so when we append some data nodes to the dom we should check bind proc
+    need to respect custom serialize proc when serializing 
+
+
+## Fixing error reporting
+
+error reporting needs to be tied into the standardized model we already have in place for Lead Sheets
+the current state is totally unacceptable

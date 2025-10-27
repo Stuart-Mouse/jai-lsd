@@ -28,6 +28,10 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
     register_common_types(*parser.script);
     
     init_lexer(parser, file, location = .{ file_path, 1, 1 });
+    
+    parser.dom_root       = alloc_node(parser, Node_Field);
+    parser.current_parent = parser.dom_root;
+    parser.dom_root.value = alloc_node(parser, Node_Object);
 }
 
 deinit_parser :: (parser: *Parser) {
@@ -72,14 +76,10 @@ process_data_bindings :: (parser: *Parser) -> bool {
     Although, if we ever remove the pointer to parent from DOM nodes, we may go ahead and just make this recursive.
 */
 construct_dom_from_gon_file :: (using parser: *Parser) -> bool {
-    dom_root       = alloc_node(parser, Node_Field);
-    current_parent = dom_root;
-    dom_root.value = alloc_node(parser, Node_Object);
-    
     while !expect_token_type(*script, .EOF) {
         field := parse_field(parser, true);
         if !field  return false;
-        append_child_node(dom_root.value.(*Node_Object), field);
+        append_child_node(parser, dom_root.value.(*Node_Object), field);
     }
     return true;
 }
@@ -91,8 +91,8 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
         log("Error, node already has a data binding set...");
         return false;
     }
-    
     node.binding = binding;
+    
     name_member: *Type_Info_Struct_Member;
     name_member_any: Any;
     
@@ -126,6 +126,7 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
     }
     
     // TODO: think about whether we want to reimplement this functionality
+    //       user could probably handle this in bind proc, or we could add some flag to io data
     // node.binding = deref_any_pointer(node.binding);
     
     // make indirect bindings onto child nodes
@@ -136,123 +137,132 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
           case .STRUCT;
             for node_object.fields {
                 member := get_field(xx node.binding.type, it.name);
-                if !member || (member.flags & .CONSTANT)  continue;
+                if !member || member.flags & .CONSTANT  continue;
                 
                 // we don't want to set it if the name member has a binding to a child node
                 if member == name_member then name_member = null;
                 
                 member_any := Any.{ member.type, node.binding.value_pointer + member.offset_in_bytes };
-                add_data_binding_to_node(it, member_any);
+                if !add_data_binding_to_node(it, member_any)  return false;
             }
             
             // we don't want to set the name member if the parent exists and is an indexed array, because then the gon name is being used for the index
-            if node.parent && (node.parent.field_flags & .ARRAY_INDEXED) then name_member = null;
+            if node.parent && has_flag(node.parent.field_flags, .ARRAY_INDEXED) then name_member = null;
             
             
           case .ARRAY;
-            ti_array := node.binding.type.(*Type_Info_Array);
+            array := Any_Array.from(node.binding);
             
-            if io_data && (.ARRAY_INDEXED & io_data.flags) {
+            if io_data && has_flag(io_data.flags, .ARRAY_INDEXED) {
                 node.field_flags |= .ARRAY_INDEXED;
             }
             
-            element_io_data   := get_io_data(ti_array.element_type);
-            element_is_struct := ti_array.element_type.type == .STRUCT;
+            element_io_data := get_io_data(array.element_type);
             
-            if element_is_struct {
-                node.field_flags |= .ARRAY_AS_OBJECT;
+            if !has_flag(node.field_flags, .ARRAY_INDEXED) && array.element_type.type == .STRUCT {
+                // TODO: find out why the below logic is causing issues. I think it should be correct
                 // if !element_io_data || !element_io_data.name_member {
-                //     log("Data binding error: object-type array must contain a struct with a defined name member.");
+                //     log("Data binding error: object-type array must contain a struct with a defined name member. Node is %", format_node_path(node,, temp));
                 //     return false;
                 // }
+                node.field_flags |= .ARRAY_AS_OBJECT;
             }
             
-            if !(node.field_flags & (.ARRAY_AS_OBJECT | .ARRAY_INDEXED)) {
-                log("Data binding error: object-type array must contain a struct with a defined name member.");
+            if !has_any_flags(node.field_flags, .ARRAY_AS_OBJECT | .ARRAY_INDEXED) {
+                log("Data binding error: object-type array must be indexed or contain a struct with a defined name member.");
                 return false;
             }
             
-            if ti_array.array_type == .RESIZABLE {
-                raw_array := node.binding.value_pointer.(*Resizable_Array);
-
-                if .ARRAY_INDEXED & node.field_flags {
+            if has_flag(node.field_flags, .ARRAY_INDEXED) {
+                min_index, max_index := S64_MAX, S64_MIN;
+                if io_data.enum_index_type {
                     for node_object.fields {
-                        elem_index: int;
-                        ok: bool;
-                        if io_data.enum_index_type {
-                            elem_index, ok = enum_name_to_value(xx io_data.enum_index_type, it.name);
-                            if !ok {
-                                log("Data Binding Error: Unable to parse enum value from string: %", it.name);
-                                return false;
-                            }
-                        } else {
-                            elem_index, ok = to_integer(it.name);
-                            if !ok {
-                                log("Data Binding Error: Unable to parse integer from string: %", it.name);
-                                return false;
-                            }
-                        }
-                        elem_any := array_add_any_at_index(node.binding, elem_index);
-                        add_data_binding_to_node(it, elem_any);
-                    }
-                } else {
-                    count_before := raw_array.count;
-                    resize(Any_Array.from(node.binding), count_before + node_object.fields.count, true);
-                    
-                    for node_object.fields {
-                        elem_any := Any.{ ti_array.element_type, raw_array.data + ((count_before + it_index) * ti_array.element_type.runtime_size) };
-                        add_data_binding_to_node(it, elem_any);
-                    }
-                }
-            } else { // .FIXED and .VIEW
-                array_count, array_data := get_array_count_and_data(node.binding.value_pointer, ti_array);
-                
-                if .ARRAY_INDEXED & node.field_flags {
-                    for node_object.fields {
-                        elem_index := -1;
-                        if io_data.enum_index_type 
-                            then elem_index = enum_name_to_value(xx io_data.enum_index_type, it.name);
-                            else elem_index = to_integer(it.name);
-                        
-                        if elem_index < 0 || elem_index >= array_count {
-                            log("Error: array index is out of bounds.");
+                        index, ok := enum_name_to_value(xx io_data.enum_index_type, it.name);
+                        if !ok {
+                            log("Data binding error: unable to parse enum value from string: %", it.name);
                             return false;
                         }
-                        
-                        elem_any := Any.{ ti_array.element_type, array_data + (ti_array.element_type.runtime_size * elem_index) };
-                        add_data_binding_to_node(it, elem_any);
+                        min_index = min(min_index, index);
+                        max_index = max(max_index, index);
                     }
                 } else {
-                    if ti_array.array_type == .VIEW {
-                        raw_array   := node.binding.value_pointer.(*Array_View_64);
-                        array_count  = node_object.fields.count;
-                        new_size    := array_count * ti_array.element_type.runtime_size;
-                        array_data   = realloc(raw_array.data, new_size, raw_array.count * ti_array.element_type.runtime_size);
-                        raw_array.*  = .{ array_count, array_data };
-                    }
-                    
-                    if node_object.fields.count > array_count {
-                        log("Error: too many elements in array.");
-                        return false;
-                    }
-                    
                     for node_object.fields {
-                        elem_any := Any.{ ti_array.element_type, array_data + (ti_array.element_type.runtime_size * it_index) };
-                        add_data_binding_to_node(it, elem_any);
+                        index, ok, remainder := to_integer(it.name);
+                        if !ok || remainder {
+                            log("Data binding error: unable to parse integer from string: %", it.name);
+                            return false;
+                        }
+                        min_index = min(min_index, index);
+                        max_index = max(max_index, index);
                     }
+                }
+                
+                // TODO: add a configurable absolute max index so that we don't resize to some insane amount.
+                // TODO: maybe move this check for negative indices into above loops?
+                if min_index < 0 || max_index < 0 {
+                    log("Data binding error: invalid array index: %, index cannot be negative.", min_index);
+                    return false;
+                }
+                if array.array_type == {
+                  case .RESIZABLE;
+                    resize(array, max_index, true);
+                    
+                  case .FIXED; #through;
+                  case .VIEW;
+                    count, data := get_count_and_data(array);
+                    if data {
+                        if node_object.fields.count > count {
+                            log("Data binding error: bounds check failed on array or slice.");
+                            return false;
+                        }
+                    } else if array.array_type == .VIEW {
+                        assert(count == 0);
+                        resize(array, max_index, true);
+                    }
+                }
+                
+                if io_data.enum_index_type {
+                    for node_object.fields {
+                        index := enum_name_to_value(xx io_data.enum_index_type, it.name);
+                        if !add_data_binding_to_node(it, array[index])  return false;
+                    }
+                } else {
+                    for node_object.fields {
+                        index := to_integer(it.name);
+                        if !add_data_binding_to_node(it, array[index])  return false;
+                    }
+                }
+            } else {
+                count, data := get_count_and_data(array);
+                
+                // NOTE: we apply an offset to the index used for child bindings when we are 
+                //       dealing with a resizable array which already contains some elements
+                index_offset := 0;  
+                
+                if array.array_type == {
+                  case .RESIZABLE;
+                    resize(array, count + node_object.fields.count, true);
+                    index_offset = count;
+                    
+                  case .FIXED; #through;
+                  case .VIEW;
+                    if data {
+                        if node_object.fields.count > count {
+                            log("Data binding error: bounds check failed on array or slice.");
+                            return false;
+                        }
+                    } else if array.array_type == .VIEW {
+                        assert(count == 0);
+                        resize(array, node_object.fields.count, true);
+                    }
+                }
+                for node_object.fields {
+                    if !add_data_binding_to_node(it, array[index_offset + it_index])  return false;
                 }
             }
             
-            /* 
-                TODO: 
-                LSD objects can only validly be bound to arrays when the element type is a struct,
-                or if it is an indexed array (where the name of each field is the index to which the value will be stored).
-                So, we should perform a check to ensure that these conditions are met, else return an error.
-                The user will have to state explicitly that they want to parse a given array binding as an indexed array, otherwise there is some ambiguity as to how to handle ths situation.
-            */
-            
           case;
-            log("Invalid data binding, mismatched gon(OBJECT)/internal(%) type on node %.", (cast(*Type)*node.binding.type).*, format_node_path(node,, temp));
+            log("Error: cannot bind value of type % to % %.", as_type(node.binding.type), node_object.node_type, format_node_path(node,, temp));
             return false;
         }
         
@@ -261,78 +271,63 @@ add_data_binding_to_node :: (node: *Node_Field, binding: Any) -> bool  {
         node_array := node.value.(*Node_Array);
         if node.binding.type.type == {
           case .STRUCT;
-            ti_struct := node.binding.type.(*Type_Info_Struct);
-
-            if node_array.fields.count > ti_struct.members.count {
+            struct_info := node.binding.type.(*Type_Info_Struct);
+            
+            if node_array.fields.count > struct_info.members.count {
                 log("Data binding error: array-type struct contains too many elements.");
                 return false;
             }
             
             last_member_offset := -1;
             for node_array.fields {
-                member := ti_struct.members[it_index];
-                if member.flags & .CONSTANT  break;
+                member := struct_info.members[it_index];
+                if member.flags & .CONSTANT  continue;
                 if member.offset_in_bytes < last_member_offset  break;
                 last_member_offset = member.offset_in_bytes;
                 
                 member_any := Any.{ member.type, node.binding.value_pointer + member.offset_in_bytes };
-                add_data_binding_to_node(it, member_any);
+                if !add_data_binding_to_node(it, member_any)  return false;
             }
             
           case .ARRAY;
-            ti_array := node.binding.type.(*Type_Info_Array);
+            array := Any_Array.from(node.binding);
+            count, data := get_count_and_data(array);
+            index_offset: int; // for dynamic array case, where we want to leave the existing items untouched
             
-            array_data:   *void;
-            array_count:  int;
-            count_before: int; // for dynamic array case, where we want to leave the existing items untouched
-            
-            if ti_array.array_type == {
+            if array.array_type == {
               case .RESIZABLE;
-                raw_array := node.binding.value_pointer.(*Resizable_Array);
-                count_before = raw_array.count;
                 /*
                     IMPORTANT NOTE: 
-                    
                     It is critical that the proper amount of space is pre-allocated for the dynamic array 
                     and that we don't have to realloc when we make data bindings for elements below.
                     Because if we realloc then that invalidates the pointers in the data bindings that we created
                     for all previous elements, since those are now pointing to the old locations of each element.
                 */
-                resize(Any_Array.from(node.binding), count_before + node_array.fields.count, true);
-                
-                // address stored to array_data is first empty element, because this is the first element in the sequence we want to assign to
-                array_data  = raw_array.data + count_before * ti_array.element_type.runtime_size;
-                array_count = raw_array.count;
+                resize(Any_Array.from(node.binding), count + node_array.fields.count, true);
+                index_offset = count;
                 
               case .VIEW;
-                raw_array := node.binding.value_pointer.(*Array_View_64);
-                
-                // count_before     = raw_array.count;
-                // raw_array.count += node_array.fields.count;
-                // raw_array.data   = realloc(raw_array.data, ti_array.element_type.runtime_size * raw_array.count, ti_array.element_type.runtime_size * count_before);
-                
-                raw_array.count = node_array.fields.count;
-                raw_array.data  = alloc(ti_array.element_type.runtime_size * raw_array.count);
-                
-                array_data  = raw_array.data;
-                array_count = raw_array.count;
+                if data == null {
+                    assert(count == 0);
+                    resize(array, node_array.fields.count);
+                    count = node_array.fields.count; // @HACK: doing this because we read count in the .FIXED case below
+                }
+                #through;
                 
               case .FIXED;
-                array_data  = node.binding.value_pointer;
-                array_count = ti_array.array_count;
-                if node_array.fields.count > array_count {
+                if node_array.fields.count > count {
                     log("Data binding error: bounds check failed on fixed-size array.");
                     return false;
                 }
             }
             
+            count, data = get_count_and_data(array);
             for node_array.fields {
-                elem_any := Any.{ ti_array.element_type, array_data + (ti_array.element_type.runtime_size * it_index) };
-                add_data_binding_to_node(it, elem_any);
+                if !add_data_binding_to_node(it, array[index_offset + it_index])  return false;
             }
             
           case;
-            log("Data binding error: mismatched gon(ARRAY)/internal(%) type on node %.", (*node.binding.type).(*Type).*, node.*);
+            log("Error: cannot bind value of type % to % %.", as_type(node.binding.type), node_array.node_type, format_node_path(node,, temp));
             return false;
         }
     }
@@ -808,7 +803,7 @@ parse_array_contents :: (using parser: *Parser, array: *Node_Array) -> bool {
     while !expect_token_type(*script, .CLOSE_BRACKET) {
         field := parse_field(parser, false);
         if !field  return false;
-        append_child_node(array, field);
+        append_child_node(parser, array, field);
     }
     return true;
 }
@@ -817,7 +812,7 @@ parse_object_contents :: (using parser: *Parser, object: *Node_Object) -> bool {
     while !expect_token_type(*script, .CLOSE_BRACE) {
         field := parse_field(parser, true);
         if !field  return false;
-        append_child_node(object, field);
+        append_child_node(parser, object, field);
     }
     return true;
 }

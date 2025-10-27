@@ -8,12 +8,6 @@ Field_Flags :: enum_flags {
     PENDING_TYPECHECK;
     EVALUATED;
     
-    // used to mark that we should not try to assign the name of a gon object to the name_member of a struct
-    DONT_ASSIGN_NAME;
-    
-    // used to indicate that a field assumes the parent object's binding, used for special field value ref syntax
-    BIND_PARENT;
-
     // formatting flags
     SAME_LINE;
 }
@@ -95,15 +89,15 @@ get_fields :: inline (field: *Node_Field) -> *Field_List {
 }
 
 is_object :: inline (field: *Node_Field) -> bool {
-    return field && field.value.node_type == Node_Object;
+    return field && field.value && field.value.node_type == Node_Object;
 }
 
 is_array :: inline (field: *Node_Field) -> bool {
-    return field && field.value.node_type == Node_Array;
+    return field && field.value && field.value.node_type == Node_Array;
 }
 
 is_aggregate :: inline (field: *Node_Field) -> bool {
-    return field && (field.value.node_type == Node_Object || field.value.node_type == Node_Array);
+    return field && field.value && field.value && (field.value.node_type == Node_Object || field.value.node_type == Node_Array);
 }
 
 Node_Insert_Mode :: enum {
@@ -157,38 +151,25 @@ find_node_by_path :: (parser: *Parser, node: *Node_Field, path: string) -> (*Nod
 find_child_node_by_name :: (parent: *Node_Field, name: string) -> (*Node_Field, int) {
     if !is_aggregate(parent)  return null, -1;
     
-    for parent.value.(*Node_Object).fields
+    for get_fields(parent)
         if it.name == name  
             return it, it_index;
             
     return null, -1;
 }
 
-append_data_node :: (parent: *Node_Field, path: string, data_binding: Any, prepend: bool = false) -> *Node_Field {    
-    node := append_node_with_path(parent, path, prepend = prepend);
-    if node == null  return node;
-    
-    node.data_binding = data_binding;
-    node.type = determine_node_type_for_serialization(node); // TODO: combine into one  with the below indirect data bindings one below. maybe we just inline those here for now
-    
-    // make indirect bindings
-    if node.type == .OBJECT || node.type == .ARRAY {
-        append_nodes_for_indirect_bindings(node);
-    }
-    
-    return node;
+append_child_node :: (parser: *Parser, parent: *Node_Field, node: *Node_Field, prepend := false) -> *Node_Field {
+    return append_child_node(parser, parent.value.(*Node_Object), node, prepend);
 }
 
-append_child_node :: (parent: *Node_Field, node: *Node_Field, prepend := false) -> *Node_Field {
-    return append_child_node(parent.value.(*Node_Object), node, prepend);
+append_child_node :: (parser: *Parser, array: *Node_Array, node: *Node_Field, prepend := false) -> *Node_Field {
+    return append_child_node(parser, array.(*Node_Object), node, prepend);
 }
-
-append_child_node :: (array: *Node_Array, node: *Node_Field, prepend := false) -> *Node_Field {
-    return append_child_node(array.(*Node_Object), node, prepend);
-}
-append_child_node :: (object: *Node_Object, node: *Node_Field, prepend := false) -> *Node_Field {
+append_child_node :: (parser: *Parser, object: *Node_Object, node: *Node_Field, prepend := false) -> *Node_Field {
     assert(object.node_type == Node_Object || object.node_type == Node_Array, "Node type was %", node.node_type);
     fields := *object.fields; // NOTE: this is valid for both Node_Object and Node_Array
+    
+    if !node then node = alloc_node(parser, Node_Field);
     
     node.parent = object.parent;
     fields.count += 1;
@@ -223,36 +204,34 @@ append_child_node :: (object: *Node_Object, node: *Node_Field, prepend := false)
 //      but maybe this is too fragile and hard ot understand.
 // NOTE: may be a little bit odd, but if you want tell if a node was overwritten or not, 
 //       check if type == .INVALID. if so, then the node was either created or overwritten
-get_or_add_child_node :: (parent: *Node_Field, name: string, insert_mode: Node_Insert_Mode = .DEFAULT, prepend := false) ->  *Node_Field {
+get_or_add_child_node :: (parser: *Parser, parent: *Node_Field, name: string, insert_mode: Node_Insert_Mode = .DEFAULT, prepend := false) ->  *Node_Field {
     node: *Node_Field;
     
     if insert_mode != .DEFAULT  node = find_child_node_by_name(parent, name);
-    if node == null  node = append_child_node(parent, prepend);
+    if node == null {
+        node = append_child_node(parser, parent, null, prepend);
+    }
     else if insert_mode == .UNDERWRITE  return node;
     
     node.* = .{ name = name };
     return node;
 }
 
-append_node_with_path :: (parent: *Node_Field, path: string, insert_mode: Node_Insert_Mode = .DEFAULT, prepend: bool = false) -> *Node_Field {
+append_node_with_path :: (parser: *Parser, parent: *Node_Field, path: string, insert_mode: Node_Insert_Mode = .DEFAULT, prepend: bool = false) -> *Node_Field {
     node := parent;
     _path := path;
     while true {
         next:, _path = path_next(_path);
-        if !_path  return get_or_add_child_node(node, next, insert_mode, prepend);
+        if !_path  return get_or_add_child_node(parser, node, next, insert_mode, prepend);
         
         child := find_child_node_by_name(node, next);
-        if child != null {
-            if child.type != .OBJECT {
-                return null; // error, we can't create a named subnode on an array or field type node
-            }
+        if child {
             node = child;
             continue;
         }
         
-        node      = append_child_node(node, prepend);
+        node      = append_child_node(parser, node, null, prepend);
         node.name = next;
-        node.type = .OBJECT;
     }
     
     assert(false, "unreachable");
@@ -265,41 +244,6 @@ remove_node :: (node: *Node_Field) {
     if node.prev != null          node.prev.next    = node.next;
     if node.parent.children.first == node  node.parent.children.first = node.next;
     if node.parent.children.last  == node  node.parent.children.last  = node.prev;
-}
-
-clone_child_nodes_recursive :: (dst: *Node_Field, src: *Node_Field) -> bool {
-    for child: src.children {
-        node := append_child_node(dst, false);
-        if !clone_node_recursive(node, child)  return false;
-    }
-    return true;
-}
-
-clone_node_recursive :: (dst: *Node_Field, src: *Node_Field) -> bool {    
-    // free child nodes so we can overwrite
-    if dst.type == .OBJECT {
-        delete_child_nodes_recursive(dst);
-    }
-    
-    dst.name         = src.name;
-    dst.type         = src.type;
-    dst.flags        = src.flags;
-    dst.data_binding = src.data_binding;
-    dst.content      = .{};
-    
-    if src.type == {
-      case .OBJECT; #through;
-      case .ARRAY;
-        return clone_child_nodes_recursive(dst, src);
-        
-      case .FIELD;
-        dst.value = src.value;
-        
-      case .INVALID;
-        return false;
-    }
-    
-    return true;
 }
 
 format_node_path :: (node: *Node_Field) -> string {
