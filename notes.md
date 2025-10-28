@@ -509,9 +509,38 @@ some difficulties:
         needs to happen at node insertion time
         so when we append some data nodes to the dom we should check bind proc
     need to respect custom serialize proc when serializing 
-
+    
 
 ## Fixing error reporting
 
 error reporting needs to be tied into the standardized model we already have in place for Lead Sheets
 the current state is totally unacceptable
+
+## Special Syntax for UUID
+
+Could use some syntax similar to Jai's notes to specify a uuid alongside the name of an object/field
+maybe even support it in arrays, idk
+not a priority at the moment, but may be worth playing around with in the future
+
+
+## Better Support For Any
+
+we should be able to pass an Any of an Any and have that be filled in by lsd parser
+this will require some explicit flag if user is passing this as a binding directly
+when serializing an Any, we most definitely need to serialize an explicit type name
+    should probably also error or warn user when type to be serialized is not found in script's type table
+        becuase if it is not, then we probably won't be able to read it back in!
+
+Both in Lead Sheets and now here, we are reaching a point with Any that its use kind of breaks down in a weird way
+Anything can implicitly cast to an Any (in which case we get that thing indirectly)
+    EXCEPT for an Any
+assigning an Any to an Any, or passing an Any to a procedure taking an Any just means that we pass the any we already have
+we don't take an Any of the Any in the same way that we would take and Any of any other type
+so we have to do a little weird extra step of manually constructing the Any of the Any
+    using some procedure like make_any()
+
+Now what could possibly be the case for making an Any of an Any?
+    the primary reason is for serializing data that was allocated for use as an Any
+    
+
+In the case of LSD, the primary functionality we want to support here is for the user to be able to get back some dynamic-new'd Any into a binding which is itself an Any

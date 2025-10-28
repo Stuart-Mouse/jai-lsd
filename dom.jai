@@ -2,14 +2,10 @@
 Field_Flags :: enum_flags {
     // parsing flags
     ARRAY_AS_OBJECT;
-    ARRAY_INDEXED;
-    ARRAY_ENUMERATED;
+    IS_INDEXED_ARRAY;
     
     PENDING_TYPECHECK;
     EVALUATED;
-    
-    // formatting flags
-    SAME_LINE;
 }
 
 Node_Field :: struct {
@@ -213,7 +209,7 @@ get_or_add_child_node :: (parser: *Parser, parent: *Node_Field, name: string, in
     }
     else if insert_mode == .UNDERWRITE  return node;
     
-    node.* = .{ name = name };
+    node.* = .{ name = name, parent = parent };
     return node;
 }
 
