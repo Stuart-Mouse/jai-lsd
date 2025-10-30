@@ -692,7 +692,7 @@ my_parse_leaf :: (using script: *Script) -> *Node {
         }
         
         if !evaluate_directive(script, directive, .PARSE) {
-            set_parse_error(script, "Failed while trying to execute a directive during parsing.", loc = token.location);
+            set_parse_error(script, "Failed while trying to execute a directive during parsing.", loc = token.location, node = directive);
             return null;
         }
         return directive;

@@ -541,6 +541,15 @@ so we have to do a little weird extra step of manually constructing the Any of t
 
 Now what could possibly be the case for making an Any of an Any?
     the primary reason is for serializing data that was allocated for use as an Any
-    
+    for example, with our entities' virtual members which are declared by scripts with types not known at compile-time
+    (
+        note to self: because we are probably going to be using the same set of types in most scripts and in our serialization, we should probably just make a single user-level type table that can be constructed at runtime
+        that way we can easily add types, and have persistent, user-defined IDs per each type. We could also add in some logic to export any other types referenced recursively (e.g. for pointer and array types)
+        but at the same time, these types are not treated the same as those explicitly enumerated with persistent ids (which means the user will not be able to dynamically instanciate or serialize these types as an Any)
+    )
 
 In the case of LSD, the primary functionality we want to support here is for the user to be able to get back some dynamic-new'd Any into a binding which is itself an Any
+    ok we have this now
+    will need logic when serializing Any to handle the additional dereference
+    should also use an explicit type specifier where applicable
+
