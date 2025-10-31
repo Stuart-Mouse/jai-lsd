@@ -134,7 +134,8 @@ insert_data_node :: (parser: *Parser, parent: *Node_Field, path: string, data_bi
         then node.binding = io_data.bind_proc(data_binding);
         else node.binding = data_binding;
     
-    assert(node.binding.value_pointer != null);
+    log("binding: { %, % }", as_type(data_binding.type), data_binding.value_pointer);
+    assert(node.binding.value_pointer != null, "parent.path: %, node.binding: { %, % }", get_location(parent), as_type(node.binding.type), data_binding.value_pointer);
     
     // NOTE: we don't use the io data of type returned by io_data.bind_proc. But maybe we should, at least for some things.
     // TODO: handle unwrapping of variant types

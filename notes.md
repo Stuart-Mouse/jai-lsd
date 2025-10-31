@@ -608,3 +608,14 @@ In the case of LSD, the primary functionality we want to support here is for the
     will need logic when serializing Any to handle the additional dereference
     should also use an explicit type specifier where applicable
 
+
+## Indexed Arrays
+
+TODO: we can probaly remove the special flags for indexed arrays and just notice that if our data binding is an array and we are in an object, and the element uses an integer as the name, then that element corresponds to a particular index
+      maybe we always use the first element as authoritative to determine whether all elements ought to use an index
+      there's really no reason from a parsing perspective why we should have to specify in io data to use indices
+      the only reason we really need the io data flag is for serialization
+      
+If we do this much of a refactor for array parsing/handling, perhaps we should also commit to just using a single aggregate type and parsing with/without names based on the first element
+      this would remove the extra complication of using square brackets for both array literals and array indexing, may make syntax more clear
+

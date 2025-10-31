@@ -80,35 +80,51 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
     }
     node.binding = binding;
     
+    // NOTE: we explicitly do not make bindings for Any, since it should receive whatever type is present lexcally.
+    if node.binding.type.type == .ANY {
+        return true;
+    }
+    return add_indirect_bindings_for_aggregate(parser, node, node.value, node.binding);
+}
+
+// NOTE: field_node is optional, since we may be applying bindings for an aggregate that is not directly bound to a field
+add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field, value_node: *Node, _binding: Any) -> bool {
     name_member: *Type_Info_Struct_Member;
     name_member_any: Any;
     
-    io_data := get_io_data(node.binding.type);
-    if io_data {
+    binding := _binding;
+    io_data := get_io_data(binding.type);
+    
+    // NOTE: we only check for a name member or bind proc if field_node is present
+    if field_node && io_data {
         // because we may rebind the node, we need to assign the name_member_any
         // if this Any is still set after making bindings to child nodes, then we will assign to it
         if io_data.name_member {
             name_member = io_data.name_member;
-            name_member_any = Any.{ name_member.type, node.binding.value_pointer + name_member.offset_in_bytes };
+            name_member_any = Any.{ name_member.type, field_node.binding.value_pointer + name_member.offset_in_bytes };
         }
         
         if io_data.bind_proc {
-            node.binding = io_data.bind_proc(node.binding);
-            if node.binding.value_pointer == null {
-                set_typecheck_error(parser, "io_data.bind_proc returned null", node = node);
+            old_binding := binding;
+            binding = io_data.bind_proc(binding);
+            field_node.binding = binding;
+            // log("io_data.bind_proc transformed binding for field '%': { %, % } -> { %, % }", field_node.name, as_type(old_binding.type), old_binding.value_pointer, as_type(binding.type), binding.value_pointer);
+            if binding.value_pointer == null {
+                set_typecheck_error(parser, "io_data.bind_proc returned null", node = field_node);
                 return false;
             }
             // get new io data for new binding
-            io_data = get_io_data(node.binding.type);
+            io_data = get_io_data(binding.type);
         }
     }
     
     defer if name_member {
         name_member_io_data := get_io_data(name_member_any.type);
         if name_member_io_data && name_member_io_data.parse_proc {
-            return name_member_io_data.parse_proc(name_member_any, node.name);
+            return name_member_io_data.parse_proc(name_member_any, field_node.name);
         } else {
-            return Convert.any_to_any(name_member_any, node.name);
+            // log("setting name member: '%' for binding @ %", field_node.name, name_member_any.value_pointer);
+            return Convert.any_to_any(name_member_any, field_node.name);
         }
     }
     
@@ -116,8 +132,6 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
     //       user could probably handle this in bind proc, or we could add some flag to io data
     // node.binding = deref_any_pointer(node.binding);
     
-    // make indirect bindings onto child nodes
-    value_node := node.value;
     if value_node.node_type == {
       case Node_Dot;
         dot := value_node.(*Node_Dot);
@@ -131,35 +145,36 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
     if value_node.node_type == {
       case Node_Object;
         node_object := value_node.(*Node_Object);
-        if node.binding.type.type == {
+        node_object.value_pointer = binding.value_pointer;
+        if binding.type.type == {
           case .ANY;
             
           case .STRUCT;
             for node_object.fields {
-                member := get_field(xx node.binding.type, it.name);
+                member := get_field(xx binding.type, it.name);
                 if !member || member.flags & .CONSTANT  continue;
                 
                 // we don't want to set it if the name member has a binding to a child node
                 if member == name_member then name_member = null;
                 
-                member_any := Any.{ member.type, node.binding.value_pointer + member.offset_in_bytes };
+                member_any := Any.{ member.type, binding.value_pointer + member.offset_in_bytes };
                 if !add_data_binding_to_node(parser, it, member_any)  return false;
             }
             
             // we don't want to set the name member if the parent exists and is an indexed array, because then the gon name is being used for the index
-            if node.parent && has_flag(node.parent.field_flags, .IS_INDEXED_ARRAY) then name_member = null;
+            if field_node && field_node.parent && has_flag(field_node.parent.field_flags, .IS_INDEXED_ARRAY) then name_member = null;
             
             
           case .ARRAY;
-            array := Any_Array.from(node.binding);
+            array := Any_Array.from(binding);
             
-            if io_data && has_flag(io_data.flags, .IS_INDEXED_ARRAY) {
-                node.field_flags |= .IS_INDEXED_ARRAY;
+            if field_node && io_data && has_flag(io_data.flags, .IS_INDEXED_ARRAY) {
+                field_node.field_flags |= .IS_INDEXED_ARRAY;
             }
             
             element_io_data := get_io_data(array.element_type);
             
-            is_valid_binding := has_flag(node.field_flags, .IS_INDEXED_ARRAY);
+            is_valid_binding := has_flag(field_node.field_flags, .IS_INDEXED_ARRAY);
             if !is_valid_binding && array.element_type.type == .STRUCT {
                 // TODO: find out why the below logic is causing issues. I think it should be correct
                 // print_vars(array.element_type, element_io_data);
@@ -168,17 +183,17 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
             }
             
             if !is_valid_binding {
-                set_typecheck_error(parser, "Object with binding to array type must be indexed or contain a struct type with a name member defined in io_data. Element type was %", as_type(array.element_type), node = node);
+                set_typecheck_error(parser, "Object with binding to array type must be indexed or contain a struct type with a name member defined in io_data. Element type was %", as_type(array.element_type), node = value_node);
                 return false;
             }
             
-            if has_flag(node.field_flags, .IS_INDEXED_ARRAY) {
+            if io_data && has_flag(io_data.flags, .IS_INDEXED_ARRAY) {
                 min_index, max_index := S64_MAX, S64_MIN;
                 if io_data.enum_index_type {
                     for node_object.fields {
                         index, ok := enum_name_to_value(xx io_data.enum_index_type, it.name);
                         if !ok {
-                            set_typecheck_error(parser, "Unable to parse enum value from string: %", it.name, node = node);
+                            set_typecheck_error(parser, "Unable to parse enum value from string: %", it.name, node = value_node);
                             return false;
                         }
                         min_index = min(min_index, index);
@@ -188,7 +203,7 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
                     for node_object.fields {
                         index, ok, remainder := to_integer(it.name);
                         if !ok || remainder {
-                            set_typecheck_error(parser, "Unable to parse integer from string: %", it.name, node = node);
+                            set_typecheck_error(parser, "Unable to parse integer from string: %", it.name, node = value_node);
                             return false;
                         }
                         min_index = min(min_index, index);
@@ -199,7 +214,7 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
                 // TODO: add a configurable absolute max index so that we don't resize to some insane amount.
                 // TODO: maybe move this check for negative indices into above loops?
                 if min_index < 0 || max_index < 0 {
-                    set_typecheck_error(parser, "Invalid array index: %, index cannot be negative", min_index, node = node);
+                    set_typecheck_error(parser, "Invalid array index: %, index cannot be negative", min_index, node = value_node);
                     return false;
                 }
                 if array.array_type == {
@@ -211,7 +226,7 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
                     count, data := get_count_and_data(array);
                     if data {
                         if node_object.fields.count > count {
-                            set_typecheck_error(parser, "Bounds check failed on fixed array or view. Object contains % elements, but array only contains space for % elements.", node_object.fields.count, count, node = node);
+                            set_typecheck_error(parser, "Bounds check failed on fixed array or view. Object contains % elements, but array only contains space for % elements.", node_object.fields.count, count, node = value_node);
                             return false;
                         }
                     } else if array.array_type == .VIEW {
@@ -233,10 +248,7 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
                 }
             } else {
                 count, data := get_count_and_data(array);
-                
-                // NOTE: we apply an offset to the index used for child bindings when we are 
-                //       dealing with a resizable array which already contains some elements
-                index_offset := 0;  
+                index_offset := 0;
                 
                 if array.array_type == {
                   case .RESIZABLE;
@@ -247,7 +259,7 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
                   case .VIEW;
                     if data {
                         if node_object.fields.count > count {
-                            set_typecheck_error(parser, "Bounds check failed on fixed array or view. Object contains % elements, but array only contains space for % elements.", node_object.fields.count, count, node = node);
+                            set_typecheck_error(parser, "Bounds check failed on fixed array or view. Object contains % elements, but array only contains space for % elements.", node_object.fields.count, count, node = value_node);
                             return false;
                         }
                     } else if array.array_type == .VIEW {
@@ -261,22 +273,23 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
             }
             
           case;
-            set_typecheck_error(parser, "Cannot bind value of type % to %", as_type(node.binding.type), node_object.node_type, node = node);
+            set_typecheck_error(parser, "Cannot bind value of type % to %", as_type(binding.type), node_object.node_type, node = value_node);
             return false;
         }
         
         
       case Node_Array;
         node_array := value_node.(*Node_Array);
-        if node.binding.type.type == {
+        node_array.value_pointer = binding.value_pointer;
+        if binding.type.type == {
           case .ANY;
             
           case .STRUCT;
-            struct_info := node.binding.type.(*Type_Info_Struct);
+            struct_info := binding.type.(*Type_Info_Struct);
             
             // TODO: should count only assignable members, not all members
             if node_array.fields.count > struct_info.members.count {
-                set_typecheck_error(parser, "Incorrect number of fields provided sor struct. Array contains % elements, but struct only contains % elements.", node_array.fields.count, struct_info.members.count, node = node);
+                set_typecheck_error(parser, "Incorrect number of fields provided sor struct. Array contains % elements, but struct only contains % elements.", node_array.fields.count, struct_info.members.count, node = value_node);
                 return false;
             }
             
@@ -287,12 +300,12 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
                 if member.offset_in_bytes < last_member_offset  break;
                 last_member_offset = member.offset_in_bytes;
                 
-                member_any := Any.{ member.type, node.binding.value_pointer + member.offset_in_bytes };
+                member_any := Any.{ member.type, binding.value_pointer + member.offset_in_bytes };
                 if !add_data_binding_to_node(parser, it, member_any)  return false;
             }
             
           case .ARRAY;
-            array := Any_Array.from(node.binding);
+            array := Any_Array.from(binding);
             count, data := get_count_and_data(array);
             index_offset: int; // for dynamic array case, where we want to leave the existing items untouched
             
@@ -305,7 +318,7 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
                     Because if we realloc then that invalidates the pointers in the data bindings that we created
                     for all previous elements, since those are now pointing to the old locations of each element.
                 */
-                resize(Any_Array.from(node.binding), count + node_array.fields.count, true);
+                resize(array, count + node_array.fields.count, true);
                 index_offset = count;
                 
               case .VIEW;
@@ -318,7 +331,7 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
                 
               case .FIXED;
                 if node_array.fields.count > count {
-                    set_typecheck_error(parser, "Bounds check failed on fixed array or view. Array literal contains % elements, but underlying array only contains space for % elements.", node_array.fields.count, count, node = node);
+                    set_typecheck_error(parser, "Bounds check failed on fixed array or view. Array literal contains % elements, but underlying array only contains space for % elements.", node_array.fields.count, count, node = value_node);
                     return false;
                 }
             }
@@ -329,7 +342,7 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
             }
             
           case;
-            set_typecheck_error(parser, "Cannot bind value of type % to %", as_type(node.binding.type), node_array.node_type, node = node);
+            set_typecheck_error(parser, "Cannot bind value of type % to %", as_type(binding.type), node_array.node_type, node = value_node);
             return false;
         }
     }
@@ -346,14 +359,19 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
     //     log("binding: %, %", as_type(node.(*Node_Field).binding.type), node.(*Node_Field).binding.value_pointer);
     // }
     
-    return_result :: (node: *Node, any: Any) -> bool #expand {
+    return_result :: (node: *Node, any: Any) #expand {
         if provided_storage {
             // log("copying Any.{ %, % } for node % -> provided storage %", as_type(any.type), any.value_pointer, node, provided_storage);
             memcpy(provided_storage, any.value_pointer, any.type.runtime_size);
             `return Any.{ node.value_type, provided_storage };
         }
-        result := push(*script.stack, any.value_pointer, any.type.runtime_size, should_push_by_pointer(node));
-        if !result  set_execution_error(script, "Ran out of space on stack!", node = node);
+        
+        ok, result := push_any(*script.stack, any, should_push_by_pointer(node));
+        if !ok  set_execution_error(script, "Ran out of space on stack!", node = node);
+        
+        print("Returning result using stack @ %: ", result.value_pointer);
+        if !is_aggregate(any.type)  print("%\n", any);
+        print(" (%)\n", as_type(any.type));
         `return result;
     }
     
@@ -412,6 +430,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
             any_ptr := any_isa(field.binding, Any);
             any_ptr.* = New_Any(field.value.value_type);
             binding = any_ptr.*;
+            log("any binding ptr: %", binding.value_pointer);
         }
         
         evaluate_node_or_return(script, field.value, binding.value_pointer);
@@ -423,6 +442,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         
       case Node_Array; #through;
       case Node_Object;
+        object := node.(*Node_Object);
         assert(node.scope.node_type == Node_Field, "%, %", node.scope.node_type, node.scope == script.ast_root);
         
         // TODO: this assumption will very likely need to change
@@ -430,31 +450,14 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         // this is primarily so that we can correctly assign values to Anys
         // later, we will probably need to ensure that all fields within an aggregate have bindings to some parent object allocated for the aggregate (if the aggregate indeed needs some temporary value)
         // maybe we can just use get_result_storage for that after all...? (but fields need their bindings at typecheck time... AAAUUUGHH)
-        assert(provided_storage != null);
+        value_pointer := ifx object.value_pointer else provided_storage;
+        assert(value_pointer != null);
         
-        object := node.(*Node_Object);
-        for object.fields {
-            evaluate_node_or_return(script, it);
-            // if it.binding.value_pointer 
-        }
+        for object.fields  evaluate_node_or_return(script, it);
         
-        binding := Any.{ object.value_type, provided_storage };
+        binding := Any.{ object.value_type, value_pointer };
         return_result(object, binding);
         
-        // value_pointer := object.parent.binding;
-        // // if object.value_pointer
-        // //     then value_pointer = object.value_pointer;
-        // //     else value_pointer = get_result_storage(literal);
-        
-        // for object.fields {
-        //     write_pointer := value_pointer;
-        //     evaluate_node_or_return(script, it, provided_storage = write_pointer);
-        // }
-        
-        // // if object.value_pointer {
-        // //     return_result(object, Any.{ object.value_type, object.value_pointer });
-        // // }
-        // return Any.{ object.value_type, value_pointer };
         
       case Node_Dot;
         dot := node.(*Node_Dot);
@@ -486,15 +489,15 @@ my_typecheck_node :: (
         field.flags |= .VALUE_TYPE_IS_NOMINAL;
         
         if field.binding.type == null {
-            if hint_type {
-                // create impromptu filler binding if we have a hint type
-                // this allows for aggregate literals to be used in arbitrary expressions
-                temp_binding := New_Any(hint_type,, LS.get_pool_allocator(*parser.pool));
-                if !add_data_binding_to_node(parser, field, temp_binding)  return null;
-            } else {
+            // if hint_type {
+            //     // create impromptu filler binding if we have a hint type
+            //     // this allows for aggregate literals to be used in arbitrary expressions
+            //     temp_binding := New_Any(hint_type,, LS.get_pool_allocator(*parser.pool));
+            //     if !add_data_binding_to_node(parser, field, temp_binding)  return null;
+            // } else {
                 field.value_type = type_info(void);
                 return field.value_type;
-            }
+            // }
         }
         
         // TODO: could create cyclic dependency error type and just check this error type to print all pending nodes on the way back up the call stack
@@ -511,7 +514,7 @@ my_typecheck_node :: (
         defer_restore(*parser.current_parent);
         parser.current_parent = field;
         
-        value_type := parser.my_typecheck_node(parser, field.value, hint_type = field.binding.type, check_flags = .IS_STATEMENT_ROOT);
+        value_type := parser.my_typecheck_node(parser, field.value, hint_type = field.binding.type);
         if !value_type  return null;
         
         // NOTE: if an io data parse proc is present, then the value_type of the RHS can always be a string
@@ -575,30 +578,12 @@ my_typecheck_node :: (
         }
         object.value_type = hint_type;
         
-        if !(check_flags & .IS_STATEMENT_ROOT) {
-            
+        if !object.value_pointer {
+            object.value_pointer = Dynamic_New(object.value_type);
+            if !add_indirect_bindings_for_aggregate(parser, null, object, Any.{ object.value_type, object.value_pointer })  return null;
         }
         
         for object.fields {
-            // element_hint_type: *Type_Info;
-            // if object.value_type.type == {
-            //   case .ARRAY;
-            //     element_hint_type = object.value_type.(*Type_Info_Array).element_type;
-                
-            //   case .STRUCT;
-            //     struct_info := object.value_type.(*Type_Info_Struct);
-            //     if it.name {
-            //         member_info := get_field(struct_info, it.name);
-            //         element_hint_type = ifx member_info then member_info.type;
-            //     } else {
-            //         // NOTE: just assuming that index is valid if we made it this far... is this ok? (probably not)
-            //         element_hint_type = struct_info.members[it_index].type;
-            //     }
-                
-            //   case;
-            //     unreachable();
-            // }
-            // if !parser.my_typecheck_node(parser, it, hint_type = element_hint_type)  return null;
             if !parser.my_typecheck_node(parser, it)  return null;
         }
         return object.value_type;

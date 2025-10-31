@@ -25,6 +25,7 @@ Node_Object :: struct {
     using #as 
     base:           Node;
     fields:         Field_List;
+    value_pointer:  *void;
     
     #place scope; parent: *Node_Field;
 }
@@ -33,6 +34,7 @@ Node_Array :: struct {
     using #as 
     base:           Node;
     fields:         Field_List;
+    value_pointer:  *void;
     
     #place scope; parent: *Node_Field;
 }
