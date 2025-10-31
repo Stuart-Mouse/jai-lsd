@@ -495,6 +495,61 @@ can we make comma after object/array optional again after introducing these new 
     seems like probably no, but we will see
 
 
+handling storage for aggregates
+    for sake of field references, all referenceable fields need to have a data binding
+        which means that all referenceable fields's values 
+    we presume that we can resolve all field references purely lexically, before doing any evaluation
+    but we can also use aggregates in just general expressions...
+    which could create weird cases for out-of-order evaluation
+
+
+how do we resolve a reference to "field.a"?
+in this case we will be able to reduce the expression for field when typechecking and issue a replacement node that is just a single merged object...
+except wait no, that doesn't work if we do that after data bindings have already been done
+so we will have to run the directive at parse time
+ok no problem so we do that and then it will just be one aggregate when we apply bindings and typecheck
+```
+field: $"other_field" && { 
+    a: 10,
+    c: 30,
+},
+other_field: { 
+    a: 1,
+    b: 2,
+    c: 3,
+    d: 4,
+},
+another_field: $"field/a",
+```
+but there is another case. say we just have some more general expression that needs to be evaluated like so:
+(presume position is a vec2f)
+```
+position: [ 3, 5 ] * 2,
+
+other_position: { x: $"/position/x" }
+```
+
+idk, maybe we just can't resolve field references unless there is a very clear lexical path from one field to another
+*maybe* we can handle references like in the first case, but the second seems somewhat intractible
+but to be fair, it's probably not even that big of a deal for this limitation on field references to exist since we can then access into the referenced field using some arbitrary expression anyhow
+the main benefit of even using the lexical reference is, for example, in named arrays where we can refer to a particular element by name rather than index
+
+I don't even really care that much about the patch semantics at the moment, since really the struct literals are just going to be much more generally useful
+
+
+need to be able to check if some node object or array is bound directly to a field
+    because if it is not, then we can't make direct data bindings to its fields and it will not be lexically indexable
+    can probably just use .IS_STATEMENT_ROOT for this...
+
+problem: we can't create impromptu bindings for fields without bindings unless we have a hint type
+         which I suppose in many cases, we will have
+         but the situation will still be weird with references
+         and we may have to make invalid references an evaluation-time error, which I quite dislike
+
+```
+position: [ 3, 5 ] * [ 1, 2 ],
+
+```
 
 ## Fixing serialization
 

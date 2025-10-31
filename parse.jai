@@ -43,8 +43,8 @@ deinit_parser :: (parser: *Parser) {
 parse_file_to_dom :: (file: string, filepath := "") -> (Parser, bool) {
     parser: Parser;
     init_parser(*parser, file, filepath);
-    if !construct_dom_from_file(*parser)  return parser, false;
-    return parser, true;
+    ok := parse_object_contents(*parser, parser.dom_root.value.(*Node_Object), .EOF);
+    return parser, ok;
 }
 
 add_data_binding_to_dom :: (parser: *Parser, binding: Any, path: string) -> bool {
@@ -69,25 +69,6 @@ process_data_bindings :: (parser: *Parser) -> bool {
         if has_error(parser)  return false;
     }
     return true;
-}
-
-construct_dom_from_file :: (using parser: *Parser) -> bool {
-    while !expect_token_type(*script, .EOF) {
-        field := parse_field(parser, true);
-        if !field  return false;
-        append_child_node(parser, dom_root.value.(*Node_Object), field);
-    }
-    return true;
-}
-
-get_io_data_name :: (any: Any) -> bool, string {
-    io_data := get_io_data(any.type);
-    if !io_data || !io_data.name_member  return false, "";
-    
-    name_member_any := get_member(any, io_data.name_member);
-    
-    name: string;
-    return Convert.any_to_any(name, name_member_any), name;
 }
 
 add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -> bool  {
@@ -136,10 +117,23 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
     // node.binding = deref_any_pointer(node.binding);
     
     // make indirect bindings onto child nodes
-    if node.value.node_type == {
+    value_node := node.value;
+    if value_node.node_type == {
+      case Node_Dot;
+        dot := value_node.(*Node_Dot);
+        if dot.right.node_type == {
+          case Node_Object; #through;
+          case Node_Array;
+            value_node = dot.right;
+        }
+    }
+    
+    if value_node.node_type == {
       case Node_Object;
-        node_object := node.value.(*Node_Object);
+        node_object := value_node.(*Node_Object);
         if node.binding.type.type == {
+          case .ANY;
+            
           case .STRUCT;
             for node_object.fields {
                 member := get_field(xx node.binding.type, it.name);
@@ -273,8 +267,10 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
         
         
       case Node_Array;
-        node_array := node.value.(*Node_Array);
+        node_array := value_node.(*Node_Array);
         if node.binding.type.type == {
+          case .ANY;
+            
           case .STRUCT;
             struct_info := node.binding.type.(*Type_Info_Struct);
             
@@ -385,7 +381,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
       case Node_Field;
         assert(provided_storage == null);
         field := node.(*Node_Field);
-                
+        
         if field.field_flags & .EVALUATED  return VOID_ANY;
         defer field.field_flags |= .EVALUATED;
         
@@ -400,7 +396,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         
         // NOTE: can only use a parse proc when the value type is string
         io_data := get_io_data(field.binding.type);
-        if io_data && io_data.parse_proc && field.value.value_type == xx string {
+        if io_data && io_data.parse_proc && field.value.value_type.type == .STRING {
             temp_string: string;
             evaluate_node_or_return(script, field.value, *temp_string);
             
@@ -428,10 +424,46 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
       case Node_Array; #through;
       case Node_Object;
         assert(node.scope.node_type == Node_Field, "%, %", node.scope.node_type, node.scope == script.ast_root);
-        object := node.(*Node_Object);
-        for object.fields  evaluate_node_or_return(script, it);
         
-        return_result(object, object.parent.binding);
+        // TODO: this assumption will very likely need to change
+        // but for now the assumption is that all fields will pass their *functional* value pointer to the value expression
+        // this is primarily so that we can correctly assign values to Anys
+        // later, we will probably need to ensure that all fields within an aggregate have bindings to some parent object allocated for the aggregate (if the aggregate indeed needs some temporary value)
+        // maybe we can just use get_result_storage for that after all...? (but fields need their bindings at typecheck time... AAAUUUGHH)
+        assert(provided_storage != null);
+        
+        object := node.(*Node_Object);
+        for object.fields {
+            evaluate_node_or_return(script, it);
+            // if it.binding.value_pointer 
+        }
+        
+        binding := Any.{ object.value_type, provided_storage };
+        return_result(object, binding);
+        
+        // value_pointer := object.parent.binding;
+        // // if object.value_pointer
+        // //     then value_pointer = object.value_pointer;
+        // //     else value_pointer = get_result_storage(literal);
+        
+        // for object.fields {
+        //     write_pointer := value_pointer;
+        //     evaluate_node_or_return(script, it, provided_storage = write_pointer);
+        // }
+        
+        // // if object.value_pointer {
+        // //     return_result(object, Any.{ object.value_type, object.value_pointer });
+        // // }
+        // return Any.{ object.value_type, value_pointer };
+        
+      case Node_Dot;
+        dot := node.(*Node_Dot);
+        // special case to provide proper type hint to aggregate node
+        if dot.right.node_type == Node_Object
+        || dot.right.node_type == Node_Array {
+            return script.my_evaluate_node(script, dot.right, provided_storage, flags);
+        }
+        // else just evaluate node using standard procedure
     }
     
     // the node wasn't any of our special types, so default to the standard evaluate_node
@@ -454,8 +486,15 @@ my_typecheck_node :: (
         field.flags |= .VALUE_TYPE_IS_NOMINAL;
         
         if field.binding.type == null {
-            field.value_type = type_info(void);
-            return field.value_type;
+            if hint_type {
+                // create impromptu filler binding if we have a hint type
+                // this allows for aggregate literals to be used in arbitrary expressions
+                temp_binding := New_Any(hint_type,, LS.get_pool_allocator(*parser.pool));
+                if !add_data_binding_to_node(parser, field, temp_binding)  return null;
+            } else {
+                field.value_type = type_info(void);
+                return field.value_type;
+            }
         }
         
         // TODO: could create cyclic dependency error type and just check this error type to print all pending nodes on the way back up the call stack
@@ -472,13 +511,13 @@ my_typecheck_node :: (
         defer_restore(*parser.current_parent);
         parser.current_parent = field;
         
-        value_type := parser.my_typecheck_node(parser, field.value, hint_type = field.binding.type);
+        value_type := parser.my_typecheck_node(parser, field.value, hint_type = field.binding.type, check_flags = .IS_STATEMENT_ROOT);
         if !value_type  return null;
         
         // NOTE: if an io data parse proc is present, then the value_type of the RHS can always be a string
         //       this will not affect the value type of the field itself, which will still just be the binding's type
         io_data := get_io_data(field.binding.type);
-        can_use_io_data_parse_proc := io_data != null && io_data.parse_proc != null && value_type == xx string;
+        can_use_io_data_parse_proc := io_data != null && io_data.parse_proc != null && value_type.type == .STRING;
         
         if field.binding.type.type != .ANY 
         && field.binding.type != value_type 
@@ -490,33 +529,79 @@ my_typecheck_node :: (
         field.value_type = field.binding.type;
         return field.value_type;
         
+      case Node_Dot;
+        dot := node.(*Node_Dot);
+        // special case to provide proper type hint to aggregate node
+        if dot.right.node_type == Node_Object
+        || dot.right.node_type == Node_Array {
+            left_type := parser.my_typecheck_node(parser, dot.left);
+            if has_error(parser)  return null;
+            if left_type.type != .TYPE {
+                set_typecheck_error(parser, "Left-hand side of dot-aggregate expression must be a type.", node = dot.left);
+                return null;
+            }
+            
+            if !(dot.left.flags & .IS_CONSTANT) {
+                set_typecheck_error(parser, "Type expression on left-hand side of dot operator must be constant.", node = dot);
+                return null;
+            }
+            
+            my_evaluate_node(parser, dot.left);
+            if has_error(parser)  return null;
+            namespace := pop_as(*parser.stack, *Type_Info);
+            
+            if namespace.type == {
+              case .STRUCT; #through;
+              case .ARRAY;
+                right_type := parser.my_typecheck_node(parser, dot.right, hint_type = namespace);
+                if has_error(parser)  return null;
+                assert(namespace == right_type, "Type returned by right side of aggregate literal (%) expression did not match type specified on left side of dot (%)", as_type(right_type), as_type(namespace));
+                dot.value_type = namespace;
+                return dot.value_type;
+                
+              case;
+                set_typecheck_error(parser, "Type % cannot be used for an aggregate literal.", namespace, node = dot);
+                return null;
+            }
+        }
+        // else just typecheck node using standard procedure
         
-      case Node_Object;
+      case Node_Object; #through;
+      case Node_Array;
         object := node.(*Node_Object);
-        
         if hint_type == null {
-            set_typecheck_error(parser, "Missing type hint on Node_Object.", node = node, type = .MISSING_TYPE_HINT, loc = node.location);
+            set_typecheck_error(parser, "Missing type hint on %.", node.node_type, node = node, type = .MISSING_TYPE_HINT, loc = node.location);
             return null;
         }
         object.value_type = hint_type;
+        
+        if !(check_flags & .IS_STATEMENT_ROOT) {
+            
+        }
+        
         for object.fields {
+            // element_hint_type: *Type_Info;
+            // if object.value_type.type == {
+            //   case .ARRAY;
+            //     element_hint_type = object.value_type.(*Type_Info_Array).element_type;
+                
+            //   case .STRUCT;
+            //     struct_info := object.value_type.(*Type_Info_Struct);
+            //     if it.name {
+            //         member_info := get_field(struct_info, it.name);
+            //         element_hint_type = ifx member_info then member_info.type;
+            //     } else {
+            //         // NOTE: just assuming that index is valid if we made it this far... is this ok? (probably not)
+            //         element_hint_type = struct_info.members[it_index].type;
+            //     }
+                
+            //   case;
+            //     unreachable();
+            // }
+            // if !parser.my_typecheck_node(parser, it, hint_type = element_hint_type)  return null;
             if !parser.my_typecheck_node(parser, it)  return null;
         }
         return object.value_type;
-        
-        
-      case Node_Array;
-        array := node.(*Node_Array);
-        
-        if hint_type == null {
-            set_typecheck_error(parser, "Missing type hint on Node_Array.", node = node, type = .MISSING_TYPE_HINT, loc = node.location);
-            return null;
-        }
-        array.value_type = hint_type;
-        for array.fields {
-            if !parser.my_typecheck_node(parser, it)  return null;
-        }
-        return array.value_type;
         
         
       case Node_Reference;
@@ -531,8 +616,10 @@ my_typecheck_node :: (
         reference.resolved_field = resolved_field;
         reference.resolved_field_index = Any_Number.from(resolved_index);
         
+        // TODO: probably make this a evaluation error
         if reference.resolved_field.binding.value_pointer == null {
             // TODO: handle this case by creating temporary instance of hinted type?
+            //       (this would have to use type hint of referrer, since the referenced field obviously would not have a type hint)
             set_general_error(parser, "Referenced node '%' had no data binding!.", reference.field_path, loc = reference.location);
             return null;
         }
@@ -719,6 +806,10 @@ my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node 
         
         token_after_dot := get_token(script);
         if token_after_dot.type == {
+          case .IDENTIFIER;
+            identifier := make_identifier(script, token_after_dot);
+            return make_dot(script, dot_token, left, identifier);
+            
           case .OPEN_PAREN;
             type_expr := my_parse_expression(script, 0);
             close_paren := get_token(script);
@@ -728,9 +819,19 @@ my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node 
             }
             return make_cast(script, dot_token, left, type_expr);
             
-          case .IDENTIFIER;
-            identifier := make_identifier(script, token_after_dot);
-            return make_dot(script, dot_token, left, identifier);
+          case .OPEN_BRACE;
+            object := alloc_node(script, Node_Object, loc = token.location);
+            object.(*Node_Object).parent = xx script.current_scope;
+            assert(script.current_scope.node_type == Node_Field);
+            if !parse_object_contents(xx script, object)  return null;
+            return make_dot(script, dot_token, left, object);
+            
+          case .OPEN_BRACKET;
+            array := alloc_node(script, Node_Array, loc = token.location);
+            array.(*Node_Array).parent = xx script.current_scope;
+            assert(script.current_scope.node_type == Node_Field);
+            if !parse_array_contents(xx script, array)  return null;
+            return make_dot(script, dot_token, left, array);
         }
         
         set_parse_error(script, "Unexpected % token '%' after dot.", token.type, token.text, loc = token.location);
@@ -819,6 +920,8 @@ parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
     return node;
 }
 
+// TODO: these should really work more like parse_contents_of_struct_literal
+
 parse_array_contents :: (using parser: *Parser, array: *Node_Array) -> bool {
     while !expect_token_type(*script, .CLOSE_BRACKET) {
         field := parse_field(parser, false);
@@ -828,8 +931,8 @@ parse_array_contents :: (using parser: *Parser, array: *Node_Array) -> bool {
     return true;
 }
 
-parse_object_contents :: (using parser: *Parser, object: *Node_Object) -> bool {
-    while !expect_token_type(*script, .CLOSE_BRACE) {
+parse_object_contents :: (using parser: *Parser, object: *Node_Object, scope_end_token := Token_Type.CLOSE_BRACE) -> bool {
+    while !expect_token_type(*script, scope_end_token) {
         field := parse_field(parser, true);
         if !field  return false;
         append_child_node(parser, object, field);

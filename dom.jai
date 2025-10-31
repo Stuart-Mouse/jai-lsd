@@ -1,8 +1,7 @@
 
 Field_Flags :: enum_flags {
     // parsing flags
-    ARRAY_AS_OBJECT;
-    IS_INDEXED_ARRAY;
+    IS_INDEXED_ARRAY; // TODO: consider if we can remove this flag and just use io data
     
     PENDING_TYPECHECK;
     EVALUATED;
@@ -24,16 +23,16 @@ Node_Field :: struct {
 
 Node_Object :: struct {
     using #as 
-    base:   Node;
-    fields: Field_List;
+    base:           Node;
+    fields:         Field_List;
     
     #place scope; parent: *Node_Field;
 }
 
 Node_Array :: struct {
     using #as 
-    base:   Node;
-    fields: Field_List;
+    base:           Node;
+    fields:         Field_List;
     
     #place scope; parent: *Node_Field;
 }
