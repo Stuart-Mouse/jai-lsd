@@ -93,6 +93,22 @@ serialize_dom_node :: (parser: *Parser, node: *Node_Field, builder: *String_Buil
         _is_array := is_array(node);
         same_line ||= _is_array && fields.first && do_sameline_for_type(fields.first.binding.type);
         
+        // if aggregate type is wrapped in an Any, then we want to be explicit about the type
+        // TODO: elsewhere, we should also be explicit when writing enum values from Any
+        // TODO: we should get io data for the underlying type when binding is an Any, but we should not use custom serialization procs
+        if node.binding.type.type == .ANY {
+            underlying := any_isa(node.binding, Any).*;
+            type_name := LS.get_type_name(parser, underlying.type);
+            // using regular type name as a fallback, though this is not really technically correct. but at least it has a chance of working and will be more obvious what went wrong
+            if !type_name { 
+                log("LS.get_type_name returned empty string for type %", as_type(underlying.type));
+                log("type table: %", parser.type_table);
+                type_name = type_to_string(underlying.type);
+            }
+            
+            append(builder, type_name);
+            append(builder, ".");
+        }
         append(builder, ifx _is_array then "[" else "{");
         
         flags: Serialize_Flags = .IS_FIRST_CHILD 
@@ -138,8 +154,17 @@ insert_data_node :: (parser: *Parser, parent: *Node_Field, path: string, data_bi
     assert(node.binding.value_pointer != null);
     
     // NOTE: we don't use the io data of type returned by io_data.bind_proc. But maybe we should, at least for some things.
-    // TODO: handle unwrapping of variant types
     binding := node.binding;
+    
+    // TODO: make this a while in case we have nested Any's?
+    if binding.type.type == .ANY {
+        binding = any_isa(binding, Any).*;
+        
+        // for now we will override io data if the base binding was an Any
+        // just seems like the right thing to do at the moment
+        io_data = get_io_data(data_binding.type);
+    }
+    
     while binding.type.type == .VARIANT {
         binding.type = binding.type.(*Type_Info_Variant).variant_of;
     }
