@@ -2,6 +2,7 @@
 INDENTATION_STRING :: "    ";
 
 serialize :: (parser: *Parser, builder: *String_Builder) -> bool {
+    LS.push_print_style();
     for get_fields(parser.dom_root)
         if !serialize_dom_node(parser, it, builder, 0)
             return false;
@@ -90,7 +91,7 @@ serialize_dom_node :: (parser: *Parser, node: *Node_Field, builder: *String_Buil
         fields := get_fields(node);
         
         _is_array := is_array(node);
-        same_line ||= _is_array && do_sameline_for_type(fields.first.binding.type);
+        same_line ||= _is_array && fields.first && do_sameline_for_type(fields.first.binding.type);
         
         append(builder, ifx _is_array then "[" else "{");
         

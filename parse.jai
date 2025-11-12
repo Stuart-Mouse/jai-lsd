@@ -405,6 +405,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         
         if field.binding.type == null {
             // set_execution_error(script, "field.binding.type was null", node = node);
+            log("field.binding.type was null at %", get_location(node));
             return VOID_ANY;
         }
         if field.binding.value_pointer == null {
@@ -427,10 +428,15 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         
         binding := field.binding;
         if field.binding.type.type == .ANY {
+            value_type := field.value.value_type;
+            
+            io_data := get_io_data(value_type);
+            if io_data == null  io_data = get_io_data(xx Any);
+            allocator := get_allocator(io_data);
+            
             any_ptr := any_isa(field.binding, Any);
-            any_ptr.* = New_Any(field.value.value_type);
+            any_ptr.* = New_Any(value_type,, allocator);
             binding = any_ptr.*;
-            log("any binding ptr: %", binding.value_pointer);
         }
         
         evaluate_node_or_return(script, field.value, binding.value_pointer);

@@ -4,6 +4,8 @@
 */
 
 IO_Data :: struct {
+    allocator:          Allocator;
+    
     // for structs only
     name_member:        *Type_Info_Struct_Member;
     map_key_member:     *Type_Info_Struct_Member;
@@ -58,7 +60,7 @@ get_io_data :: inline (type: *Type_Info) -> *IO_Data {
             }
         }
     }
-            
+    
     return null;
 }
 
@@ -69,4 +71,6 @@ get_struct_member_io_data :: (io_data: *IO_Data, member: *Type_Info_Struct_Membe
     return null;
 }
 
-
+get_allocator :: (io_data: *IO_Data) -> Allocator {
+    return ifx io_data && io_data.allocator.proc then io_data.allocator else context.allocator;
+}
