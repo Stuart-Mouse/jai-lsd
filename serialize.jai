@@ -41,9 +41,7 @@ Serialize_Flags :: enum_flags {
 }
 
 // TODO: maybe create some print/serializaiton error in LS that we can use here instead of execution error
-serialize_dom_node :: (parser: *Parser, node: *Node_Field, builder: *String_Builder, indent := 0, flags := Serialize_Flags.NONE, enum_index_type: *Type_Info = null) -> bool {
-    io_data := get_io_data(node.binding.type);
-    
+serialize_dom_node :: (parser: *Parser, node: *Node_Field, builder: *String_Builder, indent := 0, flags := Serialize_Flags.NONE, enum_index_type: *Type_Info = null) -> bool {    
     in_array       := has_flag(flags, .IN_ARRAY);
     is_first_child := has_flag(flags, .IS_FIRST_CHILD);
     same_line      := has_flag(flags, .SAME_LINE);
@@ -70,6 +68,8 @@ serialize_dom_node :: (parser: *Parser, node: *Node_Field, builder: *String_Buil
     }
     
     if node.value == null {
+        io_data := get_io_data(node.binding.type);
+        
         // TODO: should assert that binding type is appropriate to be printed as a simple field value
         if io_data && io_data.serialize_proc {
             ok, str := io_data.serialize_proc(node.value);
@@ -81,34 +81,37 @@ serialize_dom_node :: (parser: *Parser, node: *Node_Field, builder: *String_Buil
         } else if node.binding.type.type == .STRING {
             append_lsd_string(builder, node.binding.value_pointer.(*string).*);
         } else {
+            // TODO: we should be explicit about including the type name when writing enum values from Any
             print_to_builder(builder, "%", node.binding);
         }
         return true;
     }
     
     if is_aggregate(node) {
+        // NOTE: if aggregate type is wrapped in an Any, then we want to be explicit about the type
+        binding := node.binding;
+        if binding.type.type == .ANY {
+            binding = any_isa(binding, Any).*;
+            
+            type_name := LS.get_type_name(parser, binding.type);
+            if !type_name { 
+                log("Warning: type name for '%' could ont be found in the parser's type table. Using default type name as a fallback.", as_type(binding.type));
+                type_name = type_to_string(binding.type);
+            }
+            
+            append(builder, type_name);
+            append(builder, ".");
+        }
+        
+        io_data := get_io_data(binding.type);
+        
         same_line ||= io_data && has_flag(io_data.flags, .SERIALIZE_ON_ONE_LINE);
         fields := get_fields(node);
         
         _is_array := is_array(node);
         same_line ||= _is_array && fields.first && do_sameline_for_type(fields.first.binding.type);
         
-        // if aggregate type is wrapped in an Any, then we want to be explicit about the type
-        // TODO: elsewhere, we should also be explicit when writing enum values from Any
-        // TODO: we should get io data for the underlying type when binding is an Any, but we should not use custom serialization procs
-        if node.binding.type.type == .ANY {
-            underlying := any_isa(node.binding, Any).*;
-            type_name := LS.get_type_name(parser, underlying.type);
-            // using regular type name as a fallback, though this is not really technically correct. but at least it has a chance of working and will be more obvious what went wrong
-            if !type_name { 
-                log("LS.get_type_name returned empty string for type %", as_type(underlying.type));
-                log("type table: %", parser.type_table);
-                type_name = type_to_string(underlying.type);
-            }
-            
-            append(builder, type_name);
-            append(builder, ".");
-        }
+        
         append(builder, ifx _is_array then "[" else "{");
         
         flags: Serialize_Flags = .IS_FIRST_CHILD 
