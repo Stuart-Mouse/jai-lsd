@@ -7,8 +7,7 @@ Parser :: struct {
     // #place script.ast_root;
     dom_root: *Node_Field;
     
-    #place current_scope;
-        current_parent: *Node_Field;
+    #overlay(current_scope) current_parent: *Node_Field;
 };
 
 init_parser :: (parser: *Parser, file: string, file_path := "") {

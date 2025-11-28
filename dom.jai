@@ -18,7 +18,7 @@ Node_Field :: struct {
     // still linking field nodes in this manner so that we can more easily insert and append nodes
     next, prev: *Node_Field;
     
-    #place scope; parent: *Node_Field;
+    #overlay(scope) parent: *Node_Field;
 }
 
 Node_Object :: struct {
@@ -27,7 +27,7 @@ Node_Object :: struct {
     fields:         Field_List;
     value_pointer:  *void;
     
-    #place scope; parent: *Node_Field;
+    #overlay(scope) parent: *Node_Field;
 }
 
 Node_Array :: struct {
@@ -36,7 +36,7 @@ Node_Array :: struct {
     fields:         Field_List;
     value_pointer:  *void;
     
-    #place scope; parent: *Node_Field;
+    #overlay(scope) parent: *Node_Field;
 }
 
 Field_List :: struct { 
