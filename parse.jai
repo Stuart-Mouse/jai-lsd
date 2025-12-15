@@ -323,7 +323,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
               case .VIEW;
                 if data == null {
                     assert(count == 0);
-                    resize(array, node_array.fields.count);
+                    resize(array, node_array.fields.count, true);
                     count = node_array.fields.count; // @HACK: doing this because we read count in the .FIXED case below
                 }
                 #through;
