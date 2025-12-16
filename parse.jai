@@ -23,6 +23,7 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
     parser.my_parse_binary   = my_parse_binary;
     parser.my_typecheck_node = xx my_typecheck_node;
     parser.my_evaluate_node  = my_evaluate_node;
+    parser.my_is_valid_lvalue = my_is_valid_lvalue;
     
     register_common_types(*parser.script);
     
@@ -535,6 +536,7 @@ my_typecheck_node :: (
         }
         
         field.value_type = field.binding.type;
+        field.flags |= .TYPECHECKED;
         return field.value_type;
         
       case Node_Dot;
@@ -565,6 +567,7 @@ my_typecheck_node :: (
                 if has_error(parser)  return null;
                 assert(namespace == right_type, "Type returned by right side of aggregate literal (%) expression did not match type specified on left side of dot (%)", as_type(right_type), as_type(namespace));
                 dot.value_type = namespace;
+                dot.flags |= .TYPECHECKED;
                 return dot.value_type;
                 
               case;
@@ -591,6 +594,7 @@ my_typecheck_node :: (
         for object.fields {
             if !parser.my_typecheck_node(parser, it)  return null;
         }
+        object.flags |= .TYPECHECKED;
         return object.value_type;
         
         
@@ -627,6 +631,7 @@ my_typecheck_node :: (
                 Convert.any_to_any(Any.{ reference.value_type, *reference.resolved_field_index.value }, to_any(*reference.resolved_field_index));
             }
         }
+        reference.flags |= .TYPECHECKED;
         return reference.value_type;
     }
     
@@ -853,6 +858,31 @@ my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node 
     }
     
     return left;
+}
+
+my_is_valid_lvalue :: (script: *Script, node: *Node, need_lvalue := false, set_as_lvalue := false) -> bool {
+    need_lvalue ||= set_as_lvalue;
+    if set_as_lvalue then node.flags |= .PUSH_BY_POINTER;
+    
+    if node.node_type == {
+      case Node_Field;
+        if need_lvalue then set_typecheck_error(script, "A Node_Field cannot be used as an lvalue.", node = node);
+        return false;
+        
+      case Node_Object;
+        if need_lvalue then set_typecheck_error(script, "A Node_Object cannot be used as an lvalue.", node = node);
+        return false;
+        
+      case Node_Array;
+        if need_lvalue then set_typecheck_error(script, "A Node_Array cannot be used as an lvalue.", node = node);
+        return false;
+        
+      case Node_Reference;
+        if need_lvalue then set_typecheck_error(script, "A field reference cannot be used as an lvalue.", node = node);
+        return false;
+    }
+    
+    return is_valid_lvalue(script, node, need_lvalue, set_as_lvalue);
 }
 
 parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
