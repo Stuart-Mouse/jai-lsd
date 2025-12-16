@@ -369,9 +369,10 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         ok, result := push_any(*script.stack, any, should_push_by_pointer(node));
         if !ok  set_execution_error(script, "Ran out of space on stack!", node = node);
         
-        print("Returning result using stack @ %: ", result.value_pointer);
-        if !is_aggregate(any.type)  print("%\n", any);
-        print(" (%)\n", as_type(any.type));
+        // print("Returning result using stack @ %: ", result.value_pointer);
+        // if !is_aggregate(any.type)  print("%", any);
+        // print(" (%)", as_type(any.type));
+        // print("\n");
         `return result;
     }
     
