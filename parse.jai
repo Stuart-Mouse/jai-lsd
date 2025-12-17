@@ -71,7 +71,7 @@ process_data_bindings :: (parser: *Parser) -> bool {
     return true;
 }
 
-add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -> bool  {
+add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any, io_data_from_parent: *IO_Data = null) -> bool  {
     if node == null || binding.value_pointer == null  return true;
     
     if node.binding.value_pointer != null {
@@ -81,14 +81,13 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -
     node.binding = binding;
     
     // NOTE: we explicitly do not make bindings for Any, since it should receive whatever type is present lexcally.
-    if node.binding.type.type == .ANY {
-        return true;
-    }
+    if node.binding.type.type == .ANY  return true;
+    
     return add_indirect_bindings_for_aggregate(parser, node, node.value, node.binding);
 }
 
 // NOTE: field_node is optional, since we may be applying bindings for an aggregate that is not directly bound to a field
-add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field, value_node: *Node, _binding: Any) -> bool {
+add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field, value_node: *Node, _binding: Any, io_data_from_parent: *IO_Data = null) -> bool {
     name_member: *Type_Info_Struct_Member;
     name_member_any: Any;
     
@@ -118,8 +117,12 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
         }
     }
     
+    maybe_override_io_data(io_data, io_data_from_parent);
+    
     defer if name_member {
         name_member_io_data := get_io_data(name_member_any.type);
+        maybe_override_io_data(name_member_io_data, get_struct_member_io_data(io_data, name_member)); // TODO: test this to make sure it works properly
+        
         if name_member_io_data && name_member_io_data.parse_proc {
             return name_member_io_data.parse_proc(name_member_any, field_node.name);
         } else {
@@ -158,7 +161,9 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 if member == name_member then name_member = null;
                 
                 member_any := Any.{ member.type, binding.value_pointer + member.offset_in_bytes };
-                if !add_data_binding_to_node(parser, it, member_any)  return false;
+                member_io_data := get_struct_member_io_data(io_data, member);
+                
+                if !add_data_binding_to_node(parser, it, member_any, member_io_data)  return false;
             }
             
             // we don't want to set the name member if the parent exists and is an indexed array, because then the gon name is being used for the index
@@ -301,7 +306,9 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 last_member_offset = member.offset_in_bytes;
                 
                 member_any := Any.{ member.type, binding.value_pointer + member.offset_in_bytes };
-                if !add_data_binding_to_node(parser, it, member_any)  return false;
+                member_io_data := get_struct_member_io_data(io_data, *member);
+                
+                if !add_data_binding_to_node(parser, it, member_any, member_io_data)  return false;
             }
             
           case .ARRAY;
@@ -416,7 +423,17 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         
         // NOTE: can only use a parse proc when the value type is string
         io_data := get_io_data(field.binding.type);
-        if io_data && io_data.parse_proc && field.value.value_type.type == .STRING {
+        can_use_io_data_parse_proc := io_data != null && io_data.parse_proc != null && value_type.type == .STRING;
+        
+        // TODO: Ideally, this is a typecheck error, not a runtime error. But unfortunately, we can't pass io_data_from_parent in my_typecheck_node for now...
+        if field.binding.type.type != .ANY 
+        && field.binding.type != value_type 
+        && !can_use_io_data_parse_proc {
+            set_execution_error(parser, "Mismatched types on field binding and value expression. Expected %, got %.", as_type(field.binding.type), as_type(value_type), loc = node.location);
+            return null;
+        }
+        
+        if can_use_io_data_parse_proc {
             temp_string: string;
             evaluate_node_or_return(script, field.value, *temp_string);
             
@@ -426,6 +443,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
             }
             return VOID_ANY;
         }
+        
         
         binding := field.binding;
         if field.binding.type.type == .ANY {
@@ -526,15 +544,15 @@ my_typecheck_node :: (
         
         // NOTE: if an io data parse proc is present, then the value_type of the RHS can always be a string
         //       this will not affect the value type of the field itself, which will still just be the binding's type
-        io_data := get_io_data(field.binding.type);
-        can_use_io_data_parse_proc := io_data != null && io_data.parse_proc != null && value_type.type == .STRING;
+        // io_data := get_io_data(field.binding.type);
+        // can_use_io_data_parse_proc := io_data != null && io_data.parse_proc != null && value_type.type == .STRING;
         
-        if field.binding.type.type != .ANY 
-        && field.binding.type != value_type 
-        && !can_use_io_data_parse_proc {
-            set_general_error(parser, "Mismatched types on field binding and value expression. Expected %, got %.", as_type(field.binding.type), as_type(value_type), loc = node.location);
-            return null;
-        }
+        // if field.binding.type.type != .ANY 
+        // && field.binding.type != value_type 
+        // && !can_use_io_data_parse_proc {
+        //     set_general_error(parser, "Mismatched types on field binding and value expression. Expected %, got %.", as_type(field.binding.type), as_type(value_type), loc = node.location);
+        //     return null;
+        // }
         
         field.value_type = field.binding.type;
         field.flags |= .TYPECHECKED;

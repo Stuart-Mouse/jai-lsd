@@ -8,7 +8,11 @@ IO_Data :: struct {
     
     // for structs only
     name_member:        *Type_Info_Struct_Member;
-    map_key_member:     *Type_Info_Struct_Member;
+    
+    // TODO: do we actually want to have built-in map stuff
+    // map_key_member:     *Type_Info_Struct_Member;
+    
+    // TODO: actually implement!
     member_data:        [] struct { member: *Type_Info_Struct_Member; io_data: IO_Data; };
     
     // for arrays only, can be used to index an array using an enum name
@@ -32,6 +36,35 @@ IO_Data :: struct {
 }
 
 IO_Data_Lookup: [..] struct { type: *Type_Info; io_data: IO_Data; };
+
+merge_io_data :: (base: IO_Data, override: IO_Data) -> IO_Data {
+    merged: IO_Data;
+    
+    merged.allocator        = ifx override.allocator.proc then override.allocator else base.allocator;
+    merged.name_member      = ifx override.name_member      else base.name_member;
+    // merged.map_key_member = ifx override.map_key_member else base.map_key_member;
+    
+    // TODO: should/can we do this recursively?
+    merged.member_data      = ifx override.member_data      else base.member_data;
+    
+    merged.enum_index_type  = ifx override.enum_index_type  else base.enum_index_type;
+    merged.bind_proc        = ifx override.bind_proc        else base.bind_proc;
+    merged.parse_proc       = ifx override.parse_proc       else base.parse_proc;
+    merged.serialize_proc   = ifx override.serialize_proc   else base.serialize_proc;
+    merged.flags            = override.flags | base.flags;
+    
+    return merged;
+}
+
+#scope_module
+maybe_override_io_data :: (base: *IO_Data, override: *IO_Data) -> bool #expand {
+    if override == null  return false;
+    
+    merged := merge_io_data(base, override);
+    base = *merged;
+    return true;
+}
+#scope_export
 
 add_io_data :: inline (type: Type, io_data: IO_Data) {
     add_io_data(type.(*Type_Info), io_data);
@@ -65,6 +98,7 @@ get_io_data :: inline (type: *Type_Info) -> *IO_Data {
 }
 
 get_struct_member_io_data :: (io_data: *IO_Data, member: *Type_Info_Struct_Member) -> *IO_Data {
+    if io_data == null  return null;
     for *io_data.member_data  
         if it.member == member  
             return *it.io_data;
