@@ -619,3 +619,18 @@ TODO: we can probaly remove the special flags for indexed arrays and just notice
 If we do this much of a refactor for array parsing/handling, perhaps we should also commit to just using a single aggregate type and parsing with/without names based on the first element
       this would remove the extra complication of using square brackets for both array literals and array indexing, may make syntax more clear
 
+
+
+## Implementing IO Data for struct members
+
+The main issue right now is that we can't easily pass io_data_from_parent in my_typecheck_node and my_evaluate_node in the same way that we can in add_data_binding_to_node.
+
+Maybe we can attach a pointer to io data on the individual Node_Field-s with the understanding that these pointers are only valid within a very narrow context.
+I don't really like that solution, but it may be the easiest to implement.
+
+The most robust thing to do is probably just to add a user data pointer to the signatures of the my_xxx_node procs in LS.
+That way we can keep stuff on the stack and not worry about leaving invalid pointers laying around by accident.
+
+After the basic functionality is working for this feature, it may be worthwhile to add some better interface for setting struct member io data.
+I also need to think about how member io data works recursively, since this is somewhat of a usability concern.
+

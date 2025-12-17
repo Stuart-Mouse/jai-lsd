@@ -423,17 +423,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         
         // NOTE: can only use a parse proc when the value type is string
         io_data := get_io_data(field.binding.type);
-        can_use_io_data_parse_proc := io_data != null && io_data.parse_proc != null && value_type.type == .STRING;
-        
-        // TODO: Ideally, this is a typecheck error, not a runtime error. But unfortunately, we can't pass io_data_from_parent in my_typecheck_node for now...
-        if field.binding.type.type != .ANY 
-        && field.binding.type != value_type 
-        && !can_use_io_data_parse_proc {
-            set_execution_error(parser, "Mismatched types on field binding and value expression. Expected %, got %.", as_type(field.binding.type), as_type(value_type), loc = node.location);
-            return null;
-        }
-        
-        if can_use_io_data_parse_proc {
+        if io_data && io_data.parse_proc && field.value.value_type.type == .STRING {
             temp_string: string;
             evaluate_node_or_return(script, field.value, *temp_string);
             
@@ -443,7 +433,6 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
             }
             return VOID_ANY;
         }
-        
         
         binding := field.binding;
         if field.binding.type.type == .ANY {
