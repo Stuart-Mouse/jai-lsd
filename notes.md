@@ -634,3 +634,12 @@ That way we can keep stuff on the stack and not worry about leaving invalid poin
 After the basic functionality is working for this feature, it may be worthwhile to add some better interface for setting struct member io data.
 I also need to think about how member io data works recursively, since this is somewhat of a usability concern.
 
+
+get_io_data should probably just return a IO_Data not by pointer which has any required merging/overriding already done
+    this will require passing more context to get_io_data
+    we will still want to have the basic vresion around, so maybe we jsut rename that to get_io_data_pointer
+
+I should also consider using something like Convert's Data_Node throughout parts of GON/LSD so that we can just trivially have access to the context of the data we are dealing with.
+    Maybe we can even pass parent io data on that as well, or the merged io data... I dunno. worth thinking about though.
+
+
