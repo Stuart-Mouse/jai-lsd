@@ -269,9 +269,9 @@ append_node_path_to_string_builder :: (builder: *String_Builder, node: *Node_Fie
     The caller will also have to check if the path is absolute or relative manually before they start splitting the path.
 */
 
-path_next :: (path: string) -> (next: string, remaining: string, ok: bool) {
+path_next :: (path: string) -> next: string, remaining: string {
     found, left, right := split_from_left_by_any(path, "/\\");
-    if !found  return path, "", true;
-    return left, right, true;
+    if !found  return path, "";
+    return left, right;
 }
 
