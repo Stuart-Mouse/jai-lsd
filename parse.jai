@@ -918,6 +918,8 @@ parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
             set_parse_error(parser, "Expected a field name, but saw this instead: % (%)", name_token.text, name_token.type, node = node);
             return null;
         }
+    } else {
+        node.location = parser.lexer.location;
     }
     
     node.value = parser.my_parse_expression(parser, 0);
