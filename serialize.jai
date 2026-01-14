@@ -228,18 +228,19 @@ insert_data_node :: (parser: *Parser, parent: *Node_Field, path: string, data_bi
         }
         
       case .STRUCT;
+        structure := Any_Structure.from(binding);
         if io_data && io_data.flags & .SERIALIZE_AS_ARRAY {
             node.value = alloc_node(parser, Node_Array);
-            iterate_struct_members(binding, .SKIP_CONSTANT_AND_OVERLAY, #code {
+            for structure {
                 insert_data_node(parser, node, "", it);
-            });
+            }
             return node;
         }
         
         node.value = alloc_node(parser, Node_Object);
-        iterate_struct_members(binding, .SKIP_CONSTANT_AND_OVERLAY, #code {
+        for structure {
             insert_data_node(parser, node, it_info.name, it);
-        });
+        }
     }
     
     return null;
