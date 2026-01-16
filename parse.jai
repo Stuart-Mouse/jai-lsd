@@ -71,7 +71,7 @@ process_data_bindings :: (parser: *Parser) -> bool {
     return true;
 }
 
-add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any, io_data_from_parent: *IO_Data = null) -> bool  {
+add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any) -> bool  {
     if node == null || binding.value_pointer == null  return true;
     
     if node.binding.value_pointer != null {
@@ -87,27 +87,23 @@ add_data_binding_to_node :: (parser: *Parser, node: *Node_Field, binding: Any, i
 }
 
 // NOTE: field_node is optional, since we may be applying bindings for an aggregate that is not directly bound to a field
-add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field, value_node: *Node, _binding: Any, io_data_from_parent: *IO_Data = null) -> bool {
-    name_member: *Type_Info_Struct_Member;
-    name_member_any: Any;
-    
+add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field, value_node: *Node, _binding: Any) -> bool {
     binding := _binding;
     io_data := get_io_data(binding.type);
     
+    name_member: Any;
+    
     // NOTE: we only check for a name member or bind proc if field_node is present
     if field_node && io_data {
-        // because we may rebind the node, we need to assign the name_member_any
+        // because we may rebind the node, we need to assign the name_member Any now
         // if this Any is still set after making bindings to child nodes, then we will assign to it
         if io_data.name_member {
-            name_member = io_data.name_member;
-            name_member_any = Any.{ name_member.type, field_node.binding.value_pointer + name_member.offset_in_bytes };
+            _, name_member = get_struct_member(binding, io_data.name_member, recursive = true);
         }
         
         if io_data.bind_proc {
-            old_binding := binding;
             binding = io_data.bind_proc(binding);
             field_node.binding = binding;
-            // log("io_data.bind_proc transformed binding for field '%': { %, % } -> { %, % }", field_node.name, as_type(old_binding.type), old_binding.value_pointer, as_type(binding.type), binding.value_pointer);
             if binding.value_pointer == null {
                 set_typecheck_error(parser, "io_data.bind_proc returned null", node = field_node);
                 return false;
@@ -117,17 +113,12 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
         }
     }
     
-    maybe_override_io_data(io_data, io_data_from_parent);
-    
-    defer if name_member {
-        name_member_io_data := get_io_data(name_member_any.type);
-        maybe_override_io_data(name_member_io_data, get_struct_member_io_data(io_data, name_member)); // TODO: test this to make sure it works properly
-        
+    defer if name_member.type {
+        name_member_io_data := get_io_data(name_member.type);
         if name_member_io_data && name_member_io_data.parse_proc {
-            return name_member_io_data.parse_proc(name_member_any, field_node.name);
+            return name_member_io_data.parse_proc(name_member, field_node.name);
         } else {
-            // log("setting name member: '%' for binding @ %", field_node.name, name_member_any.value_pointer);
-            return Convert.any_to_any(name_member_any, field_node.name);
+            return Convert.any_to_any(name_member, field_node.name);
         }
     }
     
@@ -151,19 +142,24 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
         node_object.value_pointer = binding.value_pointer;
         if binding.type.type == {
           case .ANY;
+            // TODO: Need to document this case. Not sure If I just started to implement something here and forgot...
+            //       I think the idea here was that we just allow an Any to bind to a struct, but we don't do child bindings.
             
           case .STRUCT;
+            structure := Any_Structure.from(binding);
             for node_object.fields {
-                member := get_field(xx binding.type, it.name);
-                if !member || member.flags & .CONSTANT  continue;
+                found, member, info := get_member(structure, it.name, recursive = true);
+                if !found || info.flags & .CONSTANT  continue;
                 
-                // we don't want to set it if the name member has a binding to a child node
-                if member == name_member then name_member = null;
+                // we don't want to set the name member if the name member has a binding to a child node
+                // TODO: If we allow name member to be accessed through a using (which we likely want to do), then we have a problem here.
+                //       We can't set the name twice because we will be overwriting whatever string is already there, which is potentially causing a leak of that string.
+                //       So, then we have to decide whether to just assume that we can free whatever string is already present (if one is), or we have to track which strings we allocated, so we know not to overwrite them...
+                //       OR, we just say fuck it and if the user sets the name twice, then they just cause a leak...
+                //       also, the name member is not necessarily a string, so we also can't just check if its non-null and just leave it be
+                if member.value_pointer == name_member.value_pointer then name_member = Any.{};
                 
-                member_any := Any.{ member.type, binding.value_pointer + member.offset_in_bytes };
-                member_io_data := get_struct_member_io_data(io_data, member);
-                
-                if !add_data_binding_to_node(parser, it, member_any, member_io_data)  return false;
+                if !add_data_binding_to_node(parser, it, member)  return false;
             }
             
             // we don't want to set the name member if the parent exists and is an indexed array, because then the gon name is being used for the index
@@ -180,11 +176,8 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
             element_io_data := get_io_data(array.element_type);
             
             is_valid_binding := has_flag(field_node.field_flags, .IS_INDEXED_ARRAY);
-            if !is_valid_binding && array.element_type.type == .STRUCT {
-                // TODO: find out why the below logic is causing issues. I think it should be correct
-                // print_vars(array.element_type, element_io_data);
-                // if element_io_data  print_vars(element_io_data.*);
-                is_valid_binding ||= element_io_data != null && element_io_data.name_member != null;
+            if !is_valid_binding {
+                is_valid_binding ||= element_io_data != null && element_io_data.name_member != "";
             }
             
             if !is_valid_binding {
@@ -272,6 +265,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                         resize(array, node_object.fields.count, true);
                     }
                 }
+                
                 for node_object.fields {
                     if !add_data_binding_to_node(parser, it, array[index_offset + it_index])  return false;
                 }
@@ -288,6 +282,8 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
         node_array.value_pointer = binding.value_pointer;
         if binding.type.type == {
           case .ANY;
+            // TODO: Need to document this case. Not sure If I just started to implement something here and forgot...
+            //       I think the idea here was that we just allow an Any to bind to an array, but we don't do child bindings.
             
           case .STRUCT;
             struct_info := binding.type.(*Type_Info_Struct);
@@ -298,17 +294,17 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 return false;
             }
             
+            // TODO: simplify this logic once #place is fully removed from the language
             last_member_offset := -1;
             for node_array.fields {
                 member := struct_info.members[it_index];
-                if member.flags & .CONSTANT  break;
+                if member.flags & (.CONSTANT | .OVERLAY)  break;
                 if member.offset_in_bytes < last_member_offset  break;
                 last_member_offset = member.offset_in_bytes;
                 
                 member_any := Any.{ member.type, binding.value_pointer + member.offset_in_bytes };
-                member_io_data := get_struct_member_io_data(io_data, *member);
                 
-                if !add_data_binding_to_node(parser, it, member_any, member_io_data)  return false;
+                if !add_data_binding_to_node(parser, it, member_any)  return false;
             }
             
           case .ARRAY;
@@ -413,7 +409,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         
         if field.binding.type == null {
             // set_execution_error(script, "field.binding.type was null", node = node);
-            log("field.binding.type was null at %", get_location(node));
+            log("field.binding.type was null at %, node: %", get_location(node), field.name);
             return VOID_ANY;
         }
         if field.binding.value_pointer == null {
