@@ -157,13 +157,14 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 //       So, then we have to decide whether to just assume that we can free whatever string is already present (if one is), or we have to track which strings we allocated, so we know not to overwrite them...
                 //       OR, we just say fuck it and if the user sets the name twice, then they just cause a leak...
                 //       also, the name member is not necessarily a string, so we also can't just check if its non-null and just leave it be
+                //       This is probably just a problem with using and multiple bindings generally. I am not sure if there's any good way that we can check that fields are not doubly bound or assigned through using...
                 if member.value_pointer == name_member.value_pointer then name_member = Any.{};
                 
                 if !add_data_binding_to_node(parser, it, member)  return false;
             }
             
-            // we don't want to set the name member if the parent exists and is an indexed array, because then the gon name is being used for the index
-            if field_node && field_node.parent && has_flag(field_node.parent.field_flags, .IS_INDEXED_ARRAY) then name_member = null;
+            // we don't want to set the name member if the parent exists and is an indexed array, because then the field name is being used for the index
+            if field_node && field_node.parent && has_flag(field_node.parent.field_flags, .IS_INDEXED_ARRAY) then name_member = Any.{};
             
             
           case .ARRAY;
@@ -286,26 +287,39 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
             //       I think the idea here was that we just allow an Any to bind to an array, but we don't do child bindings.
             
           case .STRUCT;
-            struct_info := binding.type.(*Type_Info_Struct);
+            structure := Any_Structure.from(binding);
             
-            // TODO: should count only assignable members, not all members
-            if node_array.fields.count > struct_info.members.count {
-                set_typecheck_error(parser, "Incorrect number of fields provided sor struct. Array contains % elements, but struct only contains % elements.", node_array.fields.count, struct_info.members.count, node = value_node);
-                return false;
-            }
-            
-            // TODO: simplify this logic once #place is fully removed from the language
+            // TODO: remove this `last_member_offset` logic once #place is fully removed from the language
+            member_index := 0;
             last_member_offset := -1;
-            for node_array.fields {
-                member := struct_info.members[it_index];
-                if member.flags & (.CONSTANT | .OVERLAY)  break;
-                if member.offset_in_bytes < last_member_offset  break;
-                last_member_offset = member.offset_in_bytes;
+            for field: node_array.fields {
+                // get next assignable field
+                member: Any;
+                while find_member := true {
+                    defer member_index += 1;
+                    if member_index >= structure.members.count {
+                        set_typecheck_error(parser, "Incorrect number of fields provided for struct. Array contains % elements, but struct contains % elements.", node_array.fields.count, structure.members.count, node = value_node);
+                        return false;
+                    }
+                    
+                    member=, info := get_member_by_index(structure, member_index);
+                    if info.flags & (.CONSTANT | .OVERLAY)  continue;
+                    
+                    if info.offset_in_bytes < last_member_offset  break field;
+                    last_member_offset = info.offset_in_bytes;
+                    
+                    break find_member;
+                }
                 
-                member_any := Any.{ member.type, binding.value_pointer + member.offset_in_bytes };
-                
-                if !add_data_binding_to_node(parser, it, member_any)  return false;
+                if !add_data_binding_to_node(parser, field, member)  return false;
             }
+            
+            // TODO: should we require that exact number of fields are assigned?
+            // if member_index != node_array.fields.count-1 {
+            //     set_typecheck_error(parser, "Incorrect number of fields provided for struct. Array contains % elements, but struct contains % elements.", node_array.fields.count, structure.members.count, node = value_node);
+            //     return false;
+            // }
+            
             
           case .ARRAY;
             array := Any_Array.from(binding);

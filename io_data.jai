@@ -7,6 +7,8 @@ IO_Data :: struct {
     allocator:          Allocator;
     
     // for structs only
+    // NOTE: We used to use a *Type_Info_Struct_Member here so that we would not have to repeat the lookup, but there are a few problems with that.
+    //       It requires that we 
     name_member:        string;
     
     // TODO: actually implement!
@@ -63,7 +65,9 @@ add_io_data :: (type: *Type_Info, io_data: IO_Data) {
     array_add(*IO_Data_Lookup, .{ type, _io_data });
 }
 
-get_io_data :: inline (type: *Type_Info) -> *IO_Data {
+get_io_data :: (type: *Type_Info) -> *IO_Data {
+    it type == null  return null;
+    
     // search io data, repeating if type is a variant
     while true {
         for *IO_Data_Lookup {
@@ -89,14 +93,6 @@ get_io_data :: inline (type: *Type_Info) -> *IO_Data {
     
     return null;
 }
-
-// get_struct_member_io_data :: (io_data: *IO_Data, member: *Type_Info_Struct_Member) -> *IO_Data {
-//     if io_data == null  return null;
-//     for *io_data.member_data  
-//         if it.member == member  
-//             return *it.io_data;
-//     return null;
-// }
 
 get_allocator :: (io_data: *IO_Data) -> Allocator {
     return ifx io_data && io_data.allocator.proc then io_data.allocator else context.allocator;

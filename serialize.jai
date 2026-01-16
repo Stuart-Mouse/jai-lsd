@@ -204,7 +204,7 @@ insert_data_node :: (parser: *Parser, parent: *Node_Field, path: string, data_bi
                         // TODO: allocation strategy for element_name?
                         element_name: string;
                         name_member_any := get_struct_member(it, element_io_data.name_member);
-                        if !Convert.any_to_any(element_name, name_member_any) {
+                        if !Convert.any_to_any(element_name, name_member_any,, temp) {
                             log("Error: Unable to get name for element of array: %", format_node_path(node,, temp));
                             return null;
                         }
