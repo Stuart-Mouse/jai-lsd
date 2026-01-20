@@ -66,7 +66,7 @@ add_io_data :: (type: *Type_Info, io_data: IO_Data) {
 }
 
 get_io_data :: (type: *Type_Info) -> *IO_Data {
-    it type == null  return null;
+    if type == null  return null;
     
     // search io data, repeating if type is a variant
     while true {
