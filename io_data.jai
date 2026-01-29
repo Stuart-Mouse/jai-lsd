@@ -84,8 +84,9 @@ get_io_data :: (type: *Type_Info) -> *IO_Data {
     
     // second pass for polymorphic structs
     if type.type == .STRUCT {
+        polymorph_source_struct := type.(*Type_Info_Struct).polymorph_source_struct;
         for *IO_Data_Lookup {
-            if type.(*Type_Info_Struct).polymorph_source_struct == xx it.type {
+            if it.type == xx polymorph_source_struct {
                 return *it.io_data;
             }
         }
