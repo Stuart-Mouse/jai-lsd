@@ -255,7 +255,7 @@ do_sameline_for_type :: (ti: *Type_Info) -> bool {
 
 append_lsd_string :: (builder: *String_Builder, text: string, quote_char: u8 = "\"") -> bool {
     append(builder, quote_char);
-    ok := revert_escape_sequences(builder, text);
+    ok := escape_string(builder, text);
     append(builder, quote_char);
     return ok;
 }
