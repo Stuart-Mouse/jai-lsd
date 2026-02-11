@@ -190,7 +190,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 min_index, max_index := S64_MAX, S64_MIN;
                 if io_data.enum_index_type {
                     for node_object.fields {
-                        index, ok := enum_name_to_value(xx io_data.enum_index_type, it.name);
+                        ok, index := enum_name_to_value(xx io_data.enum_index_type, it.name);
                         if !ok {
                             set_typecheck_error(parser, "Unable to parse enum value from string: %", it.name, node = value_node);
                             return false;
@@ -236,7 +236,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 
                 if io_data.enum_index_type {
                     for node_object.fields {
-                        index := enum_name_to_value(xx io_data.enum_index_type, it.name);
+                        _, index := enum_name_to_value(xx io_data.enum_index_type, it.name);
                         if !add_data_binding_to_node(parser, it, array[index])  return false;
                     }
                 } else {
