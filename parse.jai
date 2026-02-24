@@ -896,8 +896,8 @@ my_is_valid_lvalue :: (script: *Script, node: *Node, need_lvalue := false, set_a
         return false;
         
       case Node_Reference;
-        if need_lvalue then set_typecheck_error(script, "A field reference cannot be used as an lvalue.", node = node);
-        return false;
+        // if need_lvalue then set_typecheck_error(script, "A field reference cannot be used as an lvalue.", node = node);
+        return true;
     }
     
     return is_valid_lvalue(script, node, need_lvalue, set_as_lvalue);

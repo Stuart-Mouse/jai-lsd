@@ -1,67 +1,64 @@
 #import "Basic"()(MEMORY_DEBUGGER=true);
 #import "File";
 #import "Hash_Table";
-#import "GON"()();
-#import "Lead_Sheets"()(DEBUG=true);
+#import "LSD";
+using LS :: #import "Lead_Sheets"()(USING_DYNCALL=false);
 
 Thing :: struct {
-    name     : string;
-    numbers  : [5] int;
-    fraction : float;
-    text     : string;
+    name:      string;
+    numbers:   [5] int;
+    fraction:  float;
+    text:      string;
 }
 
 Flags :: enum_flags {
-    first;
-    second;
-    third;
+    FIRST;
+    SECOND;
+    THIRD;
 }
 
 main :: () {
     // UA :: #import "Unmapping_Allocator";
     // context.allocator = UA.get_unmapping_allocator();
+    defer report_memory_leaks();
     
-    {
-        things: [..] Thing;
-        defer {
-            for *things {
-                // free(it.text);
-                free(it.name);
-            }
-            array_free(things);
+    things: [..] Thing;
+    defer {
+        for *things {
+            free(it.text);
+            free(it.name);
         }
-        flags: Flags;
-
-        add_io_data(Thing, .{
-            name_member = get_field(type_info(Thing), "name"),
-        });
-
-        file, ok := read_entire_file("test.gon");
-        defer free(file);
-        if !ok return;
-
-        parser:, ok = parse_file_to_dom(file);
-        defer deinit_parser(*parser);
-        if !ok return;
-
-        add_data_binding_to_dom(*parser, things, "things");
-        add_data_binding_to_dom(*parser, flags, "flags");
-
-        if !process_data_bindings(*parser) {
-            log(format_error(parser.error));
-            return;
-        }
-        
-        // SERIALIZATION TEST
-        // insert_data_node(*parser, "things", things);
-        output:, ok = serialize_to_string(*parser);
-        defer free(output);
-        if ok  print("%\n", output);
-
-        print("%\n", things);
-        print("%\n", flags);
+        array_free(things);
     }
-
-    report_memory_leaks();
+    flags: Flags;
+    
+    add_io_data(Thing, .{
+        name_member = "name",
+    });
+    
+    file, ok := read_entire_file("test.gon");
+    defer free(file);
+    if !ok return;
+    
+    parser:, ok = parse_file_to_dom(file);
+    defer deinit_parser(*parser);
+    if !ok return;
+    
+    add_data_binding_to_dom(*parser, things, "things");
+    add_data_binding_to_dom(*parser, flags, "flags");
+    
+    if !process_data_bindings(*parser) {
+        log(format_error(*parser));
+        return;
+    }
+    
+    // SERIALIZATION TEST
+    // insert_data_node(*parser, "things", things);
+    // ok=, output := serialize_to_string(*parser);
+    // defer free(output);
+    // if ok  print("%\n", output);
+    
+    print("%\n", things);
+    print("%\n", flags);
 }
 

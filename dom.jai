@@ -10,13 +10,36 @@ Field_Flags :: enum_flags {
 Node_Field :: struct {
     using #as 
     base:         Node;
+    
+    // TODO: replace name with key: *Node;
     name:         string;
+    
     value:        *Node;
     binding:      Any;
     field_flags:  Field_Flags;
     
     // still linking field nodes in this manner so that we can more easily insert and append nodes
     next, prev: *Node_Field;
+    
+    #overlay(scope) parent: *Node_Field;
+}
+
+/*
+    TODO: replace object and array with generic aggregate node
+          mode of indexing is determined by the first element in the aggregate
+*/
+Node_Aggregate :: struct {
+    using #as 
+    base:           Node;
+    fields:         Field_List;
+    value_pointer:  *void;
+    
+    aggregate_flags: Aggregate_Flags;
+    
+    Aggregate_Flags :: enum_flags {
+        NONE :: 0;
+        OMIT_KEYS :: 1;
+    }
     
     #overlay(scope) parent: *Node_Field;
 }

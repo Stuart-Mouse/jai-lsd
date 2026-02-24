@@ -16,5 +16,5 @@ things: {
     }
 },
 
-flags: .second | .third,
+flags: .SECOND | .THIRD,
 

@@ -1,5 +1,29 @@
 
 
+# New notes
+
+I'm not sure where I left off with the TODO items for LSD, but I think the plans moving forwards will be
+more inspired by the work currently being done for the GON overhaul and the things that are currently in my mind as actually useful features.
+
+The first thing on my mind is to use only a single syntax for aggregate types.
+And importantly, this will coincide with a change to allow more arbitrary lvalue expressions
+
+We should treat each aggregate as something more like a data scope into which we can write arbitrary assignments
+so the left-hand side can be something complex like `array.elements[3].member`, or whatever
+
+`indexing_expression: value_expression,`
+
+indexing expression can contain identifiers, member dereferences, array indexing, etc.
+if lhs is an integer literal, this indicates that we want to index that aggregate as if it were an array
+
+the first member in an aggregate sets the rule as to whether or not to use an indexing expression and the following members must follow suit
+
+could also introduce syntax to assign same value to multiple keys
+`key1, key2: value;`
+this will just create multiple field nodes that point to the same value node
+
+
+
 ## TODO
 
 implement flag for not setting name member
@@ -641,5 +665,4 @@ get_io_data should probably just return a IO_Data not by pointer which has any r
 
 I should also consider using something like Convert's Data_Node throughout parts of GON/LSD so that we can just trivially have access to the context of the data we are dealing with.
     Maybe we can even pass parent io data on that as well, or the merged io data... I dunno. worth thinking about though.
-
 

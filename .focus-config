@@ -1,0 +1,39 @@
+[25]  # Version number. Do not delete.
+
+[[workspace]]
+# These directories and files will be scanned when a workspace is opened so that search etc. works.
+.
+C:\jai
+
+[[build commands]]
+open_panel_on_build:    true
+build_working_dir:      ./examples
+run_working_dir:        ./examples
+error_regex:            ^(?P<file>.*):(?P<line>\d+),(?P<col>\d+): (?P<type>Error|Warning|Info): (?P<msg>.*)|^(?P<msg>.*error LNK.*)
+
+[Debug Build]
+build_command:          jai test.jai
+key_binding:            Alt-F5
+
+[Debug Build And Run] 
+build_command:          jai test.jai
+run_command:            ./test.exe  
+key_binding:            F5
+
+[Run]  
+run_command:            ./test.exe
+key_binding:            Ctrl-F5
+
+
+[Release Build And Run]
+build_command:          jai test.jai  - release 
+run_command:            ./test.exe
+key_binding:            F9
+
+[Release Build]
+build_command:          jai test.jai  - release 
+key_binding:            Alt-F9
+
+[Release Run]                   
+run_command:            ./test.exe
+key_binding:            Ctrl-F9
