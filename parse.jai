@@ -554,7 +554,6 @@ my_typecheck_node :: (
         // }
         
         field.value_type = field.binding.type;
-        field.flags |= .TYPECHECKED;
         return field.value_type;
         
       case Node_Dot;
@@ -585,7 +584,6 @@ my_typecheck_node :: (
                 if has_error(parser)  return null;
                 assert(namespace == right_type, "Type returned by right side of aggregate literal (%) expression did not match type specified on left side of dot (%)", as_type(right_type), as_type(namespace));
                 dot.value_type = namespace;
-                dot.flags |= .TYPECHECKED;
                 return dot.value_type;
                 
               case;
@@ -612,7 +610,6 @@ my_typecheck_node :: (
         for object.fields {
             if !parser.my_typecheck_node(parser, it)  return null;
         }
-        object.flags |= .TYPECHECKED;
         return object.value_type;
         
         
@@ -649,7 +646,6 @@ my_typecheck_node :: (
                 Convert.any_to_any(Any.{ reference.value_type, *reference.resolved_field_index.value }, to_any(*reference.resolved_field_index));
             }
         }
-        reference.flags |= .TYPECHECKED;
         return reference.value_type;
     }
     
