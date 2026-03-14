@@ -666,9 +666,9 @@ make_reference :: (script: *Script, type: Reference_Type, path: string) -> *Node
 my_parse_leaf :: (using script: *Script) -> *Node {
     token := get_token(script);
     
-    is_operator, operator_index := get_prefix_operator(script, token);
+    is_operator, operator_id := get_prefix_operator(script, token);
     if is_operator {
-        _operator := get_operator(script, operator_index);
+        operator_info := get_operator_info(script, operator_id);
         // special cases, bit of a parsing hack for the field reference operators
         // maybe later we will add the ability to have comptime operators more generally
         if token.text == {
@@ -689,9 +689,9 @@ my_parse_leaf :: (using script: *Script) -> *Node {
             return make_reference(script, .INDEX, string_token.text);
         }
         
-        left := my_parse_expression(script, _operator.precedence);
+        left := my_parse_expression(script, operator_info.precedence);
         if left == null  return null;
-        return make_operation(script, token, operator_index, left, null);
+        return make_operator(script, token, operator_id, left, null);
     }
     
     if token.type == {
@@ -859,16 +859,16 @@ my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node 
     
     // We only consume the binary operator here if it is of a higher precedence than the previous binary operator.
     // If we hit a binary operator but its precedence is too low, we return left back to caller.
-    is_operator, operator_index := get_binary_operator(script, token);
+    is_operator, operator_id := get_binary_operator(script, token);
     if is_operator {
-        _operator := get_operator(script, operator_index);
-        if _operator.precedence <= min_prec  return left;
+        operator_info := get_operator_info(script, operator_id);
+        if operator_info.precedence <= min_prec  return left;
         
         operator_token := get_token(script);
-        right := my_parse_expression(script, _operator.precedence);
+        right := my_parse_expression(script, operator_info.precedence);
         if right == null  return null;
         
-        return make_operation(script, operator_token, operator_index, left, right);
+        return make_operator(script, operator_token, operator_id, left, right);
     }
     
     return left;
