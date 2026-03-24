@@ -368,7 +368,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
 }
 
 // NOTE: Since fields all store their own bindings, we have no need to use the standard hint_storage mechanism for fields and objects.
-my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = null, flags := Execution_Flags.NONE) -> Any {
+my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = null, flags := Evaluation_Flags.NONE) -> Any {
     // log("evaluating % @ %", node.node_type, node);
     // log("provided_storage: %", provided_storage);
     // if node.node_type == Node_Field { 
