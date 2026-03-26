@@ -901,9 +901,9 @@ my_is_valid_lvalue :: (script: *Script, node: *Node, need_lvalue := false, set_a
 
 parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
     node := alloc_node(parser, Node_Field);
-    node.parent = parser.current_parent;
+    defer_restore(*parser.current_parent);
     parser.current_parent = node;
-    
+        
     if parent_is_object {
         name_token := get_token(parser);
         node.location = name_token.location;
@@ -952,7 +952,6 @@ parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
         return null;
     }
     
-    parser.current_parent = node.parent;
     return node;
 }
 
