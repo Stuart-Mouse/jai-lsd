@@ -449,7 +449,9 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
             value_type := field.value.value_type;
             
             io_data := get_io_data(value_type);
-            if io_data == null  io_data = get_io_data(xx Any);
+            if io_data == null || io_data.allocator.proc == null {
+                io_data = get_io_data(xx Any);
+            }
             allocator := get_allocator(io_data);
             
             any_ptr := any_isa(field.binding, Any);
@@ -603,7 +605,10 @@ my_typecheck_node :: (
         object.value_type = hint_type;
         
         if !object.value_pointer {
-            object.value_pointer = Dynamic_New(object.value_type);
+            // TODO: figure out if we need to remove use of temp here. 
+            // Need to clarify what the exact circumstances are that lead to this.
+            object.value_pointer = Dynamic_New(object.value_type,, temp);
+            // log("%: Called Dynamic_New for object of type %: %", get_location(object,, temp), as_type(object.value_type), object.value_pointer);
             if !add_indirect_bindings_for_aggregate(parser, null, object, Any.{ object.value_type, object.value_pointer })  return null;
         }
         

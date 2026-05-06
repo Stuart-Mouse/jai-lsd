@@ -95,6 +95,6 @@ get_io_data :: (type: *Type_Info) -> *IO_Data {
     return null;
 }
 
-get_allocator :: (io_data: *IO_Data) -> Allocator {
-    return ifx io_data && io_data.allocator.proc then io_data.allocator else context.allocator;
+get_allocator :: (io_data: *IO_Data, default := context.allocator) -> Allocator {
+    return ifx io_data && io_data.allocator.proc then io_data.allocator else default;
 }
