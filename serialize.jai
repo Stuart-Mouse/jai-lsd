@@ -3,9 +3,13 @@ INDENTATION_STRING :: "    ";
 
 serialize :: (parser: *Parser, builder: *String_Builder) -> bool {
     LS.push_print_style();
-    for get_fields(parser.dom_root)
-        if !serialize_dom_node(parser, it, builder, 0)
+    flags := Serialize_Flags.IS_FIRST_CHILD;
+    for get_fields(parser.dom_root) {
+        if !serialize_dom_node(parser, it, builder, 0, flags) {
             return false;
+        }
+        flags &= ~.IS_FIRST_CHILD;
+    }
     return true;
 }
 
@@ -46,7 +50,7 @@ serialize_dom_node :: (parser: *Parser, node: *Node_Field, builder: *String_Buil
     is_first_child := has_flag(flags, .IS_FIRST_CHILD);
     same_line      := has_flag(flags, .SAME_LINE);
     
-    if (same_line || in_array) && !is_first_child {
+    if !is_first_child {
         append(builder, ",");
     }
     if same_line {
