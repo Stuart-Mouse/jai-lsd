@@ -423,7 +423,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         
         if field.binding.type == null {
             // set_execution_error(script, "field.binding.type was null", node = node);
-            log("field.binding.type was null at %, node: %", get_location(node), field.name);
+            // log("field.binding.type was null at %, node: %", get_location(node), field.name);
             return VOID_ANY;
         }
         if field.binding.value_pointer == null {
