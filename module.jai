@@ -13,7 +13,10 @@ load_and_parse_file :: (path: string, code: Code) -> bool #expand {
     defer free(file);
     
     `parser, parser_ok := parse_file_to_dom(file, path);
-    defer deinit_parser(*parser);
+    defer {
+        log("After parsing file '%' ...", path);
+        deinit_parser(*parser);
+    }
     if !parser_ok {
         log("Unable to parse file '%'!", path);
         log(format_error(*parser)); 

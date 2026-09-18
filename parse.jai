@@ -6,7 +6,7 @@ Parser :: struct {
     // #overlay(script.ast_root);
     dom_root: *Node_Field;
     
-    allocations: [..] Allocation_Tracker.Allocation;
+    allocations: [..] LS.Allocation;
     
     #overlay(current_scope) current_parent: *Node_Field;
 };
@@ -36,7 +36,10 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
 }
 
 deinit_parser :: (parser: *Parser) {
+    LS.list_all_allocations(parser.allocations);
+    
     deinit_script(*parser.script);
+    array_reset(*parser.allocations);
 }
 
 // creates a dom parser with the given parameters, intializes it, and constructs the dom from the given file
@@ -119,8 +122,8 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
         if name_member_io_data && name_member_io_data.parse_proc {
             return name_member_io_data.parse_proc(name_member, field_node.name);
         } else {
-            allocator := wrap_allocator_for_tracking(context.allocator, *parser.allocations);
-            return Convert.any_to_any(name_member, field_node.name,, allocator);
+            // TODO: Track this allocation!
+            return Convert.any_to_any(name_member, field_node.name);
         }
     }
     
@@ -191,8 +194,6 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 return false;
             }
             
-            allocator := wrap_allocator_for_tracking(context.allocator, *parser.allocations);
-            
             if io_data && has_flag(io_data.flags, .IS_INDEXED_ARRAY) {
                 min_index, max_index := S64_MAX, S64_MIN;
                 if io_data.enum_index_type {
@@ -225,7 +226,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 }
                 if array.array_type == {
                   case .RESIZABLE;
-                    resize(array, max_index, true,, allocator);
+                    record_resize(parser, array, max_index, true);
                     
                   case .FIXED; #through;
                   case .VIEW;
@@ -237,7 +238,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                         }
                     } else if array.array_type == .VIEW {
                         assert(count == 0);
-                        resize(array, max_index, true,, allocator);
+                        record_resize(parser, array, max_index, true);
                     }
                 }
                 
@@ -258,7 +259,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 
                 if array.array_type == {
                   case .RESIZABLE;
-                    resize(array, count + node_object.fields.count, true,, allocator);
+                    record_resize(parser, array, count + node_object.fields.count, true);
                     index_offset = count;
                     
                   case .FIXED; #through;
@@ -270,7 +271,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                         }
                     } else if array.array_type == .VIEW {
                         assert(count == 0);
-                        resize(array, node_object.fields.count, true,, allocator);
+                        record_resize(parser, array, node_object.fields.count, true);
                     }
                 }
                 
@@ -328,8 +329,6 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
             count, data := get_count_and_data(array);
             index_offset: int; // for dynamic array case, where we want to leave the existing items untouched
             
-            allocator := wrap_allocator_for_tracking(context.allocator, *parser.allocations);
-            
             if array.array_type == {
               case .RESIZABLE;
                 /*
@@ -339,13 +338,13 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                     Because if we realloc then that invalidates the pointers in the data bindings that we created
                     for all previous elements, since those are now pointing to the old locations of each element.
                 */
-                resize(array, count + node_array.fields.count, true,, allocator);
+                record_resize(parser, array, count + node_array.fields.count, true);
                 index_offset = count;
                 
               case .VIEW;
                 if data == null {
                     assert(count == 0);
-                    resize(array, node_array.fields.count, true,, allocator);
+                    record_resize(parser, array, node_array.fields.count, true);
                     count = node_array.fields.count; // @HACK: doing this because we read count in the .FIXED case below
                 }
                 #through;
@@ -457,17 +456,19 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
                 io_data = get_io_data(xx Any);
             }
             allocator := get_allocator(io_data);
-            allocator  = wrap_allocator_for_tracking(allocator, *script.(*Parser).allocations);
             
             any_ptr := any_isa(field.binding, Any);
             any_ptr.* = New_Any(value_type,, allocator);
             binding = any_ptr.*;
+            
+            record_allocation(script.(*Parser), context.allocator, any_ptr.*.value_pointer);
         }
         
         evaluate_node_or_return(script, field.value, binding.value_pointer);
         if binding.type.type == .STRING {
-            allocator := wrap_allocator_for_tracking(context.allocator, *script.(*Parser).allocations);
-            any_isa(binding, string).* = copy_string(any_isa(binding, string).*,, allocator);
+            string_ptr := any_isa(binding, string);
+            string_ptr.* = copy_string(string_ptr.*);
+            record_allocation(script.(*Parser), context.allocator, string_ptr.data);
         }
         return VOID_ANY;
         
@@ -654,8 +655,8 @@ my_typecheck_node :: (
             if hint_type {
                 reference.value_type = hint_type;
                 // convert reference.resolved_field_index to the hinted type and store back into same place
-                allocator := wrap_allocator_for_tracking(context.allocator, *parser.allocations);
-                Convert.any_to_any(Any.{ reference.value_type, *reference.resolved_field_index.value }, to_any(*reference.resolved_field_index),, allocator);
+                // TODO: Record this allocation!
+                Convert.any_to_any(Any.{ reference.value_type, *reference.resolved_field_index.value }, to_any(*reference.resolved_field_index));
             }
         }
         return reference.value_type;
@@ -986,3 +987,33 @@ parse_object_contents :: (using parser: *Parser, object: *Node_Object, scope_end
     }
     return true;
 }
+
+
+
+record_resize :: (parser: *Parser, array: Any_Array, new_count: int, $$initialize := false) {
+    _, old_data := get_count_and_data(array);
+    resize(array, new_count, initialize);
+    
+    _, new_data := get_count_and_data(array);
+    
+    allocator := ifx array.array_type == .RESIZABLE 
+        then array.value_pointer.(*Resizable_Array).allocator 
+        else context.allocator;
+    
+    record_allocation(parser, allocator, new_data, old_data);
+}
+
+record_allocation :: (parser: *Parser, allocator: Allocator, memory: *void, old_memory: *void = null) {
+    if old_memory == null {
+        array_add(*parser.allocations, .{ allocator, memory });
+    }
+    
+    if old_memory != memory {
+        for *parser.allocations {
+            if it.memory == old_memory {
+                it.* = .{ allocator, memory };
+            }
+        }
+    }
+}
+
