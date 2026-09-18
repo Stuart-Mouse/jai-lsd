@@ -1,11 +1,12 @@
 #import "Print_Vars";
 
-// used to build a DOM from a text file and evaluate data bindings on that DOM
 Parser :: struct {
     using #as script: Script;
     
-    // #place script.ast_root;
+    // #overlay(script.ast_root);
     dom_root: *Node_Field;
+    
+    allocations: [..] Allocation_Tracker.Allocation;
     
     #overlay(current_scope) current_parent: *Node_Field;
 };
@@ -19,10 +20,10 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
         .{ .PREFIX, "$",  8, "" },
     );
     
-    parser.my_parse_leaf     = my_parse_leaf;
-    parser.my_parse_binary   = my_parse_binary;
-    parser.my_typecheck_node = xx my_typecheck_node;
-    parser.my_evaluate_node  = my_evaluate_node;
+    parser.my_parse_leaf      = my_parse_leaf;
+    parser.my_parse_binary    = my_parse_binary;
+    parser.my_typecheck_node  = xx my_typecheck_node;
+    parser.my_evaluate_node   = my_evaluate_node;
     parser.my_is_valid_lvalue = my_is_valid_lvalue;
     
     register_common_types(*parser.script);
@@ -118,7 +119,8 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
         if name_member_io_data && name_member_io_data.parse_proc {
             return name_member_io_data.parse_proc(name_member, field_node.name);
         } else {
-            return Convert.any_to_any(name_member, field_node.name);
+            allocator := wrap_allocator_for_tracking(context.allocator, *parser.allocations);
+            return Convert.any_to_any(name_member, field_node.name,, allocator);
         }
     }
     
@@ -183,8 +185,13 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
             
             if !is_valid_binding {
                 set_typecheck_error(parser, "Object with binding to array type must be indexed or contain a struct type with a name member defined in io_data. Element type was %", as_type(array.element_type), node = value_node);
+                // TODO: write better error messages once we do big aggregates refactor.
+                // "In order to bind an array to a key/value aggregate, the array must be indexed or contain a struct type for which you have defined a key member in IO_Data."
+                // "This array contains elements of type '%', which is not a struct." "This array contains elements of type '%', which does not have a defined key member."
                 return false;
             }
+            
+            allocator := wrap_allocator_for_tracking(context.allocator, *parser.allocations);
             
             if io_data && has_flag(io_data.flags, .IS_INDEXED_ARRAY) {
                 min_index, max_index := S64_MAX, S64_MIN;
@@ -218,7 +225,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 }
                 if array.array_type == {
                   case .RESIZABLE;
-                    resize(array, max_index, true);
+                    resize(array, max_index, true,, allocator);
                     
                   case .FIXED; #through;
                   case .VIEW;
@@ -230,7 +237,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                         }
                     } else if array.array_type == .VIEW {
                         assert(count == 0);
-                        resize(array, max_index, true);
+                        resize(array, max_index, true,, allocator);
                     }
                 }
                 
@@ -251,7 +258,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 
                 if array.array_type == {
                   case .RESIZABLE;
-                    resize(array, count + node_object.fields.count, true);
+                    resize(array, count + node_object.fields.count, true,, allocator);
                     index_offset = count;
                     
                   case .FIXED; #through;
@@ -263,7 +270,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                         }
                     } else if array.array_type == .VIEW {
                         assert(count == 0);
-                        resize(array, node_object.fields.count, true);
+                        resize(array, node_object.fields.count, true,, allocator);
                     }
                 }
                 
@@ -289,9 +296,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
           case .STRUCT;
             structure := Any_Structure.from(binding);
             
-            // TODO: remove this `last_member_offset` logic once #place is fully removed from the language
             member_index := 0;
-            last_member_offset := -1;
             for field: node_array.fields {
                 // get next assignable field
                 member: Any;
@@ -304,9 +309,6 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                     
                     member=, info := get_member_by_index(structure, member_index);
                     if info.flags & (.CONSTANT | .OVERLAY)  continue;
-                    
-                    if info.offset_in_bytes < last_member_offset  break field;
-                    last_member_offset = info.offset_in_bytes;
                     
                     break find_member;
                 }
@@ -326,6 +328,8 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
             count, data := get_count_and_data(array);
             index_offset: int; // for dynamic array case, where we want to leave the existing items untouched
             
+            allocator := wrap_allocator_for_tracking(context.allocator, *parser.allocations);
+            
             if array.array_type == {
               case .RESIZABLE;
                 /*
@@ -335,13 +339,13 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                     Because if we realloc then that invalidates the pointers in the data bindings that we created
                     for all previous elements, since those are now pointing to the old locations of each element.
                 */
-                resize(array, count + node_array.fields.count, true);
+                resize(array, count + node_array.fields.count, true,, allocator);
                 index_offset = count;
                 
               case .VIEW;
                 if data == null {
                     assert(count == 0);
-                    resize(array, node_array.fields.count, true);
+                    resize(array, node_array.fields.count, true,, allocator);
                     count = node_array.fields.count; // @HACK: doing this because we read count in the .FIXED case below
                 }
                 #through;
@@ -453,6 +457,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
                 io_data = get_io_data(xx Any);
             }
             allocator := get_allocator(io_data);
+            allocator  = wrap_allocator_for_tracking(allocator, *script.(*Parser).allocations);
             
             any_ptr := any_isa(field.binding, Any);
             any_ptr.* = New_Any(value_type,, allocator);
@@ -461,7 +466,8 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         
         evaluate_node_or_return(script, field.value, binding.value_pointer);
         if binding.type.type == .STRING {
-            any_isa(binding, string).* = copy_string(any_isa(binding, string).*);
+            allocator := wrap_allocator_for_tracking(context.allocator, *script.(*Parser).allocations);
+            any_isa(binding, string).* = copy_string(any_isa(binding, string).*,, allocator);
         }
         return VOID_ANY;
         
@@ -648,7 +654,8 @@ my_typecheck_node :: (
             if hint_type {
                 reference.value_type = hint_type;
                 // convert reference.resolved_field_index to the hinted type and store back into same place
-                Convert.any_to_any(Any.{ reference.value_type, *reference.resolved_field_index.value }, to_any(*reference.resolved_field_index));
+                allocator := wrap_allocator_for_tracking(context.allocator, *parser.allocations);
+                Convert.any_to_any(Any.{ reference.value_type, *reference.resolved_field_index.value }, to_any(*reference.resolved_field_index),, allocator);
             }
         }
         return reference.value_type;
