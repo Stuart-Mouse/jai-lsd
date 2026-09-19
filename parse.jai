@@ -37,7 +37,7 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
 }
 
 deinit_parser :: (parser: *Parser) {
-    LS.list_all_allocations(parser.allocations);
+    // LS.list_all_allocations(parser.allocations);
     
     deinit_script(*parser.script);
     array_reset(*parser.allocations);
