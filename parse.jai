@@ -7,6 +7,8 @@ Parser :: struct {
     #overlay(current_scope) current_parent: *Node_Field;
     
     // TODO: Perhaps instead of tracking all allocations, we can just make note of allocations where they occur and free them as we unwind after an error occurs.
+    //       But, the problem with that is that we allocate and assign in separate passes, which means the place where we will hit an error is not in the same call stack as where we allocate data.
+    //       So given that, it kind of requires that we track the allocations so that we can free them later.
     allocations: [..] LS.Allocation;
 };
 
@@ -36,8 +38,6 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
 }
 
 deinit_parser :: (parser: *Parser) {
-    // LS.list_all_allocations(parser.allocations);
-    
     deinit_script(*parser.script);
     array_reset(*parser.allocations);
 }
@@ -653,7 +653,7 @@ LSD_typecheck_node :: (
             if hint_type {
                 reference.value_type = hint_type;
                 // convert reference.resolved_field_index to the hinted type and store back into same place
-                // TODO: Record this allocation!
+                // TODO: Track this allocation!
                 Convert.any_to_any(Any.{ reference.value_type, *reference.resolved_field_index.value }, to_any(*reference.resolved_field_index));
             }
         }
