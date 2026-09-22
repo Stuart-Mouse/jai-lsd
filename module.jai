@@ -14,7 +14,7 @@ load_and_parse_file :: (path: string, code: Code) -> bool #expand {
     
     `parser, parser_ok := parse_file_to_dom(file, path);
     defer {
-        log("After parsing file '%' ...", path);
+        // log("After parsing file '%' ...", path);
         deinit_parser(*parser);
     }
     if !parser_ok {
