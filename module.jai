@@ -19,7 +19,7 @@ load_and_parse_file :: (path: string, code: Code) -> bool #expand {
     }
     if !parser_ok {
         log("Unable to parse file '%'!", path);
-        log(format_error(*parser)); 
+        log_error(*parser); 
         return false;
     }
     
@@ -27,13 +27,13 @@ load_and_parse_file :: (path: string, code: Code) -> bool #expand {
     
     if has_error(*parser) {
         log("User error in load_and_parse_file '%'!", path);
-        log(format_error(*parser)); 
+        log_error(*parser); 
         return false;
     }
     
     if !process_data_bindings(*parser)  {
         log("Failed to process data bindings for file '%'!", path);
-        log(format_error(*parser)); 
+        log_error(*parser); 
         return false;
     }
     

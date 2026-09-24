@@ -48,7 +48,7 @@ main :: () {
     add_data_binding_to_dom(*parser, flags, "flags");
     
     if !process_data_bindings(*parser) {
-        log(format_error(*parser));
+        log_error(*parser);
         return;
     }
     

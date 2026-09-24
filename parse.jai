@@ -123,8 +123,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
         if name_member_io_data && name_member_io_data.parse_proc {
             return name_member_io_data.parse_proc(name_member, field_node.name);
         } else {
-            // TODO: Track this allocation!
-            return Convert.any_to_any(name_member, field_node.name);
+            return Convert.any_to_any(name_member, field_node.name, xx *parser.allocations);
         }
     }
     
@@ -526,7 +525,7 @@ my_typecheck_node :: (
             // if hint_type {
             //     // create impromptu filler binding if we have a hint type
             //     // this allows for aggregate literals to be used in arbitrary expressions
-            //     temp_binding := New_Any(hint_type,, LS.get_pool_allocator(*parser.pool));
+            //     temp_binding := New_Any(hint_type,, LS.get_allocator(*parser));
             //     if !add_data_binding_to_node(parser, field, temp_binding)  return null;
             // } else {
                 field.value_type = type_info(void);
@@ -792,7 +791,7 @@ my_parse_leaf :: (using script: *Script) -> *Node {
         if !expect_token_type(script, .CLOSE_PAREN) {
             expressions := parse_comma_separated_expressions(script,, temp);
             if !expressions  return null;
-            directive.arguments = array_copy(expressions,, LS.get_pool_allocator(*script.pool));
+            directive.arguments = array_copy(expressions,, LS.get_allocator(script));
             
             close_paren_token := get_token(script);
             if close_paren_token.type != .CLOSE_PAREN {
@@ -946,7 +945,7 @@ parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
     
     if node.value == null {
         log("LSD parse error: failed to parse expression @ %", node.location);
-        log(format_error(parser));
+        log_error(parser);
         return null;
     }
     // assert(node.value != null, "%: Node value was null, but no script error was set.", LS.get_location(node));
