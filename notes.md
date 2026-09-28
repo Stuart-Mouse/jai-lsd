@@ -666,3 +666,17 @@ get_io_data should probably just return a IO_Data not by pointer which has any r
 I should also consider using something like Convert's Data_Node throughout parts of GON/LSD so that we can just trivially have access to the context of the data we are dealing with.
     Maybe we can even pass parent io data on that as well, or the merged io data... I dunno. worth thinking about though.
 
+
+
+
+# Consolidating aggreagte types into one code path
+
+Node_Object and Node_Array are now removed and we instead just have a single node type, Node_Aggregate.
+The only difference between objects and arrays is now a single flag on Node_Aggregate, "OMIT_KEYS", which does exactly that.
+
+We still need to simplify the logic for actually parsing out each type of aggregate and collapse the syntax down to only use curly braces.
+We will still want to temporarily allow using square brackets as well so that we can still read old LSD files, until the time comes to completely deprecate that syntax.
+
+I think this change to aggregate syntax will also accompany a change to replace the colon with `=`, which gets us closer to being able to just parse LSD blocks using the same code we use for normal blocks in LS 
+Once again I think the first step will be to just allow th euser to use both and then I can update files incremetally to use the new syntax
+

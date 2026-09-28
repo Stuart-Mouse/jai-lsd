@@ -48,7 +48,7 @@ deinit_parser :: (parser: *Parser) {
 parse_file_to_dom :: (file: string, filepath := "") -> (Parser, bool) {
     parser: Parser;
     init_parser(*parser, file, filepath);
-    ok := parse_object_contents(*parser, parser.dom_root.value.(*Node_Aggregate), .EOF);
+    ok := parse_contents_of_aggregate(*parser, parser.dom_root.value.(*Node_Aggregate), .EOF);
     return parser, ok;
 }
 
@@ -725,20 +725,15 @@ my_parse_leaf :: (using script: *Script) -> *Node {
         }
         return expression;
         
+      case .OPEN_BRACKET; #through;
       case .OPEN_BRACE;
         object := alloc_node(script, Node_Aggregate, loc = token.location);
         object.(*Node_Aggregate).parent = xx script.current_scope;
         assert(script.current_scope.node_type == Node_Field);
-        if !parse_object_contents(xx script, object)  return null;
-        return object;
         
-      case .OPEN_BRACKET;
-        array := alloc_node(script, Node_Aggregate, loc = token.location);
-        array.(*Node_Aggregate).parent = xx script.current_scope;
-        array.(*Node_Aggregate).aggregate_flags |= .OMIT_KEYS;
-        assert(script.current_scope.node_type == Node_Field);
-        if !parse_array_contents(xx script, array)  return null;
-        return array;
+        scope_end_token := ifx token.type == .OPEN_BRACE then Token_Type.CLOSE_BRACE else .CLOSE_BRACKET;
+        if !parse_contents_of_aggregate(xx script, object, scope_end_token)  return null;
+        return object;
         
       case .TRUE;
         literal := alloc_node(script, Node_Literal, loc = token.location, trivia = token.trivia);
@@ -835,20 +830,15 @@ my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node 
             }
             return make_cast(script, dot_token, left, type_expr);
             
+          case .OPEN_BRACKET; #through;
           case .OPEN_BRACE;
             object := alloc_node(script, Node_Aggregate, loc = token.location);
-            object.(*Node_Aggregate).parent = xx script.current_scope;
+            object.parent = xx script.current_scope;
             assert(script.current_scope.node_type == Node_Field);
-            if !parse_object_contents(xx script, object)  return null;
-            return make_dot(script, dot_token, left, object);
             
-          case .OPEN_BRACKET;
-            array := alloc_node(script, Node_Aggregate, loc = token.location);
-            array.(*Node_Aggregate).parent = xx script.current_scope;
-            array.(*Node_Aggregate).aggregate_flags |= .OMIT_KEYS;
-            assert(script.current_scope.node_type == Node_Field);
-            if !parse_array_contents(xx script, array)  return null;
-            return make_dot(script, dot_token, left, array);
+            scope_end_token := ifx token.type == .OPEN_BRACE then Token_Type.CLOSE_BRACE else .CLOSE_BRACKET;
+            if !parse_contents_of_aggregate(xx script, object, scope_end_token)  return null;
+            return make_dot(script, dot_token, left, object);
         }
         
         set_parse_error(script, "Unexpected % token '%' after dot.", token.type, token.text, loc = token.location);
@@ -903,45 +893,45 @@ my_is_valid_lvalue :: (script: *Script, node: *Node, need_lvalue := false, set_a
     return is_valid_lvalue(script, node, need_lvalue, set_as_lvalue);
 }
 
-parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
+parse_field :: (parser: *Parser) -> *Node_Field {
     node := alloc_node(parser, Node_Field);
+    node.location = parser.lexer.location;
     defer_restore(*parser.current_parent);
     parser.current_parent = node;
     
-    if parent_is_object {
-        name_token := get_token(parser);
-        node.location = name_token.location;
+    
+    {
+        name_token  := peek_token(parser, 0);
+        colon_token := peek_token(parser, 1);
         
-        if name_token.type == {
-          case .IDENTIFIER; #through;
-          case .STRING;
-            node.name   = name_token.text;
-            node.trivia = name_token.trivia;
+        if colon_token.type == .COLON {
+            get_token(parser);
+            get_token(parser);
             
-            next_token := get_token(parser);
-            if next_token.type != .COLON {
-                set_parse_error(parser, "Expected colon after field name '%', got % \"%\"", name_token.text, next_token.type, next_token.text, node = node);
+            if name_token.type == {
+              case .IDENTIFIER; #through;
+              case .STRING;
+                node.name     = name_token.text;
+                node.trivia   = name_token.trivia;
+                node.location = name_token.location;
+                
+              case;
+                set_parse_error(parser, "Expected a field name, but saw this instead: % (%)", name_token.text, name_token.type, node = node);
                 return null;
             }
-            
-          case;
-            set_parse_error(parser, "Expected a field name, but saw this instead: % (%)", name_token.text, name_token.type, node = node);
-            return null;
         }
-    } else {
-        node.location = parser.lexer.location;
     }
     
     node.value = parser.my_parse_expression(parser, 0);
-    
     if node.value == null {
-        log("LSD parse error: failed to parse expression @ %", node.location);
-        log_error(parser);
+        if !has_error(parser) {
+            set_parse_error(parser, "Expected an expression for field value.", node = node);
+        }
         return null;
     }
     // assert(node.value != null, "%: Node value was null, but no script error was set.", LS.get_location(node));
     
-    if !parent_is_object {
+    if node.name == "" {
         node.location = node.value.location;
     }
     
@@ -959,22 +949,26 @@ parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
     return node;
 }
 
-// TODO: these should really work more like parse_contents_of_struct_literal
-
-parse_array_contents :: (using parser: *Parser, array: *Node_Aggregate) -> bool {
-    while !expect_token_type(*script, .CLOSE_BRACKET) {
-        field := parse_field(parser, false);
-        if !field  return false;
-        append_child_node(parser, array, field);
-    }
-    return true;
-}
-
-parse_object_contents :: (using parser: *Parser, object: *Node_Aggregate, scope_end_token := Token_Type.CLOSE_BRACE) -> bool {
+parse_contents_of_aggregate :: (using parser: *Parser, object: *Node_Aggregate, scope_end_token := Token_Type.CLOSE_BRACE) -> bool {
+    first_field_has_name := -1; // -1 means we have not yet set this value, after that we treat this as a boolean.
+    
     while !expect_token_type(*script, scope_end_token) {
-        field := parse_field(parser, true);
+        field := parse_field(parser);
         if !field  return false;
+        
+        this_field_has_name := (field.name != "").(int);
+        if first_field_has_name == -1 {
+            first_field_has_name = this_field_has_name;
+        } else if first_field_has_name != this_field_has_name {
+            set_parse_error(*script, "Explicit member assignments cannot be mixed with simple comma-separated expressions in an aggregate.", loc = field.location);
+            return false;
+        }
+        
         append_child_node(parser, object, field);
+    }
+    
+    if first_field_has_name == 0 {
+        object.aggregate_flags |= .OMIT_KEYS;
     }
     return true;
 }
