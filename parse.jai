@@ -33,7 +33,7 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
     
     parser.dom_root       = alloc_node(parser, Node_Field);
     parser.current_parent = parser.dom_root;
-    parser.dom_root.value = alloc_node(parser, Node_Object);
+    parser.dom_root.value = alloc_node(parser, Node_Aggregate);
 }
 
 deinit_parser :: (parser: *Parser) {
@@ -48,7 +48,7 @@ deinit_parser :: (parser: *Parser) {
 parse_file_to_dom :: (file: string, filepath := "") -> (Parser, bool) {
     parser: Parser;
     init_parser(*parser, file, filepath);
-    ok := parse_object_contents(*parser, parser.dom_root.value.(*Node_Object), .EOF);
+    ok := parse_object_contents(*parser, parser.dom_root.value.(*Node_Aggregate), .EOF);
     return parser, ok;
 }
 
@@ -135,235 +135,232 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
       case Node_Dot;
         dot := value_node.(*Node_Dot);
         if dot.right.node_type == {
-          case Node_Object; #through;
-          case Node_Array;
+          case Node_Aggregate;
             value_node = dot.right;
         }
     }
     
-    if value_node.node_type == {
-      case Node_Object;
-        node_object := value_node.(*Node_Object);
-        node_object.value_pointer = binding.value_pointer;
-        if binding.type.type == {
-          case .ANY;
-            // TODO: Need to document this case. Not sure If I just started to implement something here and forgot...
-            //       I think the idea here was that we just allow an Any to bind to a struct, but we don't do child bindings.
-            
-          case .STRUCT;
-            structure := Any_Structure.from(binding);
-            for node_object.fields {
-                found, member, info := get_member(structure, it.name, recursive = true);
-                if !found || info.flags & .CONSTANT  continue;
+    if value_node.node_type == Node_Aggregate {
+        node_aggregate := value_node.(*Node_Aggregate);
+        node_aggregate.value_pointer = binding.value_pointer;
+        
+        if !(node_aggregate.aggregate_flags & .OMIT_KEYS) {
+            if binding.type.type == {
+              case .ANY;
+                // TODO: Need to document this case. Not sure If I just started to implement something here and forgot...
+                //       I think the idea here was that we just allow an Any to bind to a struct, but we don't do child bindings.
                 
-                // we don't want to set the name member if the name member has a binding to a child node
-                // TODO: If we allow name member to be accessed through a using (which we likely want to do), then we have a problem here.
-                //       We can't set the name twice because we will be overwriting whatever string is already there, which is potentially causing a leak of that string.
-                //       So, then we have to decide whether to just assume that we can free whatever string is already present (if one is), or we have to track which strings we allocated, so we know not to overwrite them...
-                //       OR, we just say fuck it and if the user sets the name twice, then they just cause a leak...
-                //       also, the name member is not necessarily a string, so we also can't just check if its non-null and just leave it be
-                //       This is probably just a problem with using and multiple bindings generally. I am not sure if there's any good way that we can check that fields are not doubly bound or assigned through using...
-                if member.value_pointer == name_member.value_pointer then name_member = Any.{};
-                
-                if !add_data_binding_to_node(parser, it, member)  return false;
-            }
-            
-            // we don't want to set the name member if the parent exists and is an indexed array, because then the field name is being used for the index
-            if field_node && field_node.parent && has_flag(field_node.parent.field_flags, .IS_INDEXED_ARRAY) then name_member = Any.{};
-            
-            
-          case .ARRAY;
-            array := Any_Array.from(binding);
-            
-            if field_node && io_data && has_flag(io_data.flags, .IS_INDEXED_ARRAY) {
-                field_node.field_flags |= .IS_INDEXED_ARRAY;
-            }
-            
-            element_io_data := get_io_data(array.element_type);
-            
-            is_valid_binding := has_flag(field_node.field_flags, .IS_INDEXED_ARRAY);
-            if !is_valid_binding {
-                is_valid_binding ||= element_io_data != null && element_io_data.name_member != "";
-            }
-            
-            if !is_valid_binding {
-                set_typecheck_error(parser, "Object with binding to array type must be indexed or contain a struct type with a name member defined in io_data. Element type was %", as_type(array.element_type), node = value_node);
-                // TODO: write better error messages once we do big aggregates refactor.
-                // "In order to bind an array to a key/value aggregate, the array must be indexed or contain a struct type for which you have defined a key member in IO_Data."
-                // "This array contains elements of type '%', which is not a struct." "This array contains elements of type '%', which does not have a defined key member."
-                return false;
-            }
-            
-            if io_data && has_flag(io_data.flags, .IS_INDEXED_ARRAY) {
-                min_index, max_index := S64_MAX, S64_MIN;
-                if io_data.enum_index_type {
-                    for node_object.fields {
-                        ok, index := enum_name_to_value(xx io_data.enum_index_type, it.name);
-                        if !ok {
-                            set_typecheck_error(parser, "Unable to parse enum value from string: %", it.name, node = value_node);
-                            return false;
-                        }
-                        min_index = min(min_index, index);
-                        max_index = max(max_index, index);
-                    }
-                } else {
-                    for node_object.fields {
-                        index, ok, remainder := to_integer(it.name);
-                        if !ok || remainder {
-                            set_typecheck_error(parser, "Unable to parse integer from string: %", it.name, node = value_node);
-                            return false;
-                        }
-                        min_index = min(min_index, index);
-                        max_index = max(max_index, index);
-                    }
+              case .STRUCT;
+                structure := Any_Structure.from(binding);
+                for node_aggregate.fields {
+                    found, member, info := get_member(structure, it.name, recursive = true);
+                    if !found || info.flags & .CONSTANT  continue;
+                    
+                    // we don't want to set the name member if the name member has a binding to a child node
+                    // TODO: If we allow name member to be accessed through a using (which we likely want to do), then we have a problem here.
+                    //       We can't set the name twice because we will be overwriting whatever string is already there, which is potentially causing a leak of that string.
+                    //       So, then we have to decide whether to just assume that we can free whatever string is already present (if one is), or we have to track which strings we allocated, so we know not to overwrite them...
+                    //       OR, we just say fuck it and if the user sets the name twice, then they just cause a leak...
+                    //       also, the name member is not necessarily a string, so we also can't just check if its non-null and just leave it be
+                    //       This is probably just a problem with using and multiple bindings generally. I am not sure if there's any good way that we can check that fields are not doubly bound or assigned through using...
+                    if member.value_pointer == name_member.value_pointer then name_member = Any.{};
+                    
+                    if !add_data_binding_to_node(parser, it, member)  return false;
                 }
                 
-                // TODO: add a configurable absolute max index so that we don't resize to some insane amount.
-                // TODO: maybe move this check for negative indices into above loops?
-                if min_index < 0 || max_index < 0 {
-                    set_typecheck_error(parser, "Invalid array index: %, index cannot be negative", min_index, node = value_node);
+                // we don't want to set the name member if the parent exists and is an indexed array, because then the field name is being used for the index
+                if field_node && field_node.parent && has_flag(field_node.parent.field_flags, .IS_INDEXED_ARRAY) then name_member = Any.{};
+                
+                
+              case .ARRAY;
+                array := Any_Array.from(binding);
+                
+                if field_node && io_data && has_flag(io_data.flags, .IS_INDEXED_ARRAY) {
+                    field_node.field_flags |= .IS_INDEXED_ARRAY;
+                }
+                
+                element_io_data := get_io_data(array.element_type);
+                
+                is_valid_binding := has_flag(field_node.field_flags, .IS_INDEXED_ARRAY);
+                if !is_valid_binding {
+                    is_valid_binding ||= element_io_data != null && element_io_data.name_member != "";
+                }
+                
+                if !is_valid_binding {
+                    set_typecheck_error(parser, "Object with binding to array type must be indexed or contain a struct type with a name member defined in io_data. Element type was %", as_type(array.element_type), node = value_node);
+                    // TODO: write better error messages once we do big aggregates refactor.
+                    // "In order to bind an array to a key/value aggregate, the array must be indexed or contain a struct type for which you have defined a key member in IO_Data."
+                    // "This array contains elements of type '%', which is not a struct." "This array contains elements of type '%', which does not have a defined key member."
                     return false;
                 }
-                if array.array_type == {
-                  case .RESIZABLE;
-                    record_resize(parser, array, max_index, true);
-                    
-                  case .FIXED; #through;
-                  case .VIEW;
-                    count, data := get_count_and_data(array);
-                    if data {
-                        if node_object.fields.count > count {
-                            set_typecheck_error(parser, "Bounds check failed on fixed array or view. Object contains % elements, but array only contains space for % elements.", node_object.fields.count, count, node = value_node);
-                            return false;
+                
+                if io_data && has_flag(io_data.flags, .IS_INDEXED_ARRAY) {
+                    min_index, max_index := S64_MAX, S64_MIN;
+                    if io_data.enum_index_type {
+                        for node_aggregate.fields {
+                            ok, index := enum_name_to_value(xx io_data.enum_index_type, it.name);
+                            if !ok {
+                                set_typecheck_error(parser, "Unable to parse enum value from string: %", it.name, node = value_node);
+                                return false;
+                            }
+                            min_index = min(min_index, index);
+                            max_index = max(max_index, index);
                         }
-                    } else if array.array_type == .VIEW {
-                        assert(count == 0);
-                        record_resize(parser, array, max_index, true);
-                    }
-                }
-                
-                if io_data.enum_index_type {
-                    for node_object.fields {
-                        _, index := enum_name_to_value(xx io_data.enum_index_type, it.name);
-                        if !add_data_binding_to_node(parser, it, array[index])  return false;
-                    }
-                } else {
-                    for node_object.fields {
-                        index := to_integer(it.name);
-                        if !add_data_binding_to_node(parser, it, array[index])  return false;
-                    }
-                }
-            } else {
-                count, data := get_count_and_data(array);
-                index_offset := 0;
-                
-                if array.array_type == {
-                  case .RESIZABLE;
-                    record_resize(parser, array, count + node_object.fields.count, true);
-                    index_offset = count;
-                    
-                  case .FIXED; #through;
-                  case .VIEW;
-                    if data {
-                        if node_object.fields.count > count {
-                            set_typecheck_error(parser, "Bounds check failed on fixed array or view. Object contains % elements, but array only contains space for % elements.", node_object.fields.count, count, node = value_node);
-                            return false;
+                    } else {
+                        for node_aggregate.fields {
+                            index, ok, remainder := to_integer(it.name);
+                            if !ok || remainder {
+                                set_typecheck_error(parser, "Unable to parse integer from string: %", it.name, node = value_node);
+                                return false;
+                            }
+                            min_index = min(min_index, index);
+                            max_index = max(max_index, index);
                         }
-                    } else if array.array_type == .VIEW {
-                        assert(count == 0);
-                        record_resize(parser, array, node_object.fields.count, true);
                     }
-                }
-                
-                for node_object.fields {
-                    if !add_data_binding_to_node(parser, it, array[index_offset + it_index])  return false;
-                }
-            }
-            
-          case;
-            set_typecheck_error(parser, "Cannot bind value of type % to %", as_type(binding.type), node_object.node_type, node = value_node);
-            return false;
-        }
-        
-        
-      case Node_Array;
-        node_array := value_node.(*Node_Array);
-        node_array.value_pointer = binding.value_pointer;
-        if binding.type.type == {
-          case .ANY;
-            // TODO: Need to document this case. Not sure If I just started to implement something here and forgot...
-            //       I think the idea here was that we just allow an Any to bind to an array, but we don't do child bindings.
-            
-          case .STRUCT;
-            structure := Any_Structure.from(binding);
-            
-            member_index := 0;
-            for field: node_array.fields {
-                // get next assignable field
-                member: Any;
-                while find_member := true {
-                    defer member_index += 1;
-                    if member_index >= structure.members.count {
-                        set_typecheck_error(parser, "Incorrect number of fields provided for struct. Array contains % elements, but struct contains % elements.", node_array.fields.count, structure.members.count, node = value_node);
+                    
+                    // TODO: add a configurable absolute max index so that we don't resize to some insane amount.
+                    // TODO: maybe move this check for negative indices into above loops?
+                    if min_index < 0 || max_index < 0 {
+                        set_typecheck_error(parser, "Invalid array index: %, index cannot be negative", min_index, node = value_node);
                         return false;
                     }
+                    if array.array_type == {
+                      case .RESIZABLE;
+                        record_resize(parser, array, max_index, true);
+                        
+                      case .FIXED; #through;
+                      case .VIEW;
+                        count, data := get_count_and_data(array);
+                        if data {
+                            if node_aggregate.fields.count > count {
+                                set_typecheck_error(parser, "Bounds check failed on fixed array or view. Object contains % elements, but array only contains space for % elements.", node_aggregate.fields.count, count, node = value_node);
+                                return false;
+                            }
+                        } else if array.array_type == .VIEW {
+                            assert(count == 0);
+                            record_resize(parser, array, max_index, true);
+                        }
+                    }
                     
-                    member=, info := get_member_by_index(structure, member_index);
-                    if info.flags & (.CONSTANT | .OVERLAY)  continue;
+                    if io_data.enum_index_type {
+                        for node_aggregate.fields {
+                            _, index := enum_name_to_value(xx io_data.enum_index_type, it.name);
+                            if !add_data_binding_to_node(parser, it, array[index])  return false;
+                        }
+                    } else {
+                        for node_aggregate.fields {
+                            index := to_integer(it.name);
+                            if !add_data_binding_to_node(parser, it, array[index])  return false;
+                        }
+                    }
+                } else {
+                    count, data := get_count_and_data(array);
+                    index_offset := 0;
                     
-                    break find_member;
+                    if array.array_type == {
+                      case .RESIZABLE;
+                        record_resize(parser, array, count + node_aggregate.fields.count, true);
+                        index_offset = count;
+                        
+                      case .FIXED; #through;
+                      case .VIEW;
+                        if data {
+                            if node_aggregate.fields.count > count {
+                                set_typecheck_error(parser, "Bounds check failed on fixed array or view. Object contains % elements, but array only contains space for % elements.", node_aggregate.fields.count, count, node = value_node);
+                                return false;
+                            }
+                        } else if array.array_type == .VIEW {
+                            assert(count == 0);
+                            record_resize(parser, array, node_aggregate.fields.count, true);
+                        }
+                    }
+                    
+                    for node_aggregate.fields {
+                        if !add_data_binding_to_node(parser, it, array[index_offset + it_index])  return false;
+                    }
                 }
                 
-                if !add_data_binding_to_node(parser, field, member)  return false;
+              case;
+                set_typecheck_error(parser, "Cannot bind value of type % to %", as_type(binding.type), node_aggregate.node_type, node = value_node);
+                return false;
             }
-            
-            // TODO: should we require that exact number of fields are assigned?
-            // if member_index != node_array.fields.count-1 {
-            //     set_typecheck_error(parser, "Incorrect number of fields provided for struct. Array contains % elements, but struct contains % elements.", node_array.fields.count, structure.members.count, node = value_node);
-            //     return false;
-            // }
-            
-            
-          case .ARRAY;
-            array := Any_Array.from(binding);
-            count, data := get_count_and_data(array);
-            index_offset: int; // for dynamic array case, where we want to leave the existing items untouched
-            
-            if array.array_type == {
-              case .RESIZABLE;
-                /*
-                    IMPORTANT NOTE: 
-                    It is critical that the proper amount of space is pre-allocated for the dynamic array 
-                    and that we don't have to realloc when we make data bindings for elements below.
-                    Because if we realloc then that invalidates the pointers in the data bindings that we created
-                    for all previous elements, since those are now pointing to the old locations of each element.
-                */
-                record_resize(parser, array, count + node_array.fields.count, true);
-                index_offset = count;
+        } else { // flags & .OMIT_KEYS (array case)
+            if binding.type.type == {
+              case .ANY;
+                // TODO: Need to document this case. Not sure If I just started to implement something here and forgot...
+                //       I think the idea here was that we just allow an Any to bind to an array, but we don't do child bindings.
                 
-              case .VIEW;
-                if data == null {
-                    assert(count == 0);
-                    record_resize(parser, array, node_array.fields.count, true);
-                    count = node_array.fields.count; // @HACK: doing this because we read count in the .FIXED case below
-                }
-                #through;
+              case .STRUCT;
+                structure := Any_Structure.from(binding);
                 
-              case .FIXED;
-                if node_array.fields.count > count {
-                    set_typecheck_error(parser, "Bounds check failed on fixed array or view. Array literal contains % elements, but underlying array only contains space for % elements.", node_array.fields.count, count, node = value_node);
-                    return false;
+                member_index := 0;
+                for field: node_aggregate.fields {
+                    // get next assignable field
+                    member: Any;
+                    while find_member := true {
+                        defer member_index += 1;
+                        if member_index >= structure.members.count {
+                            set_typecheck_error(parser, "Incorrect number of fields provided for struct. Array contains % elements, but struct contains % elements.", node_aggregate.fields.count, structure.members.count, node = value_node);
+                            return false;
+                        }
+                        
+                        member=, info := get_member_by_index(structure, member_index);
+                        if info.flags & (.CONSTANT | .OVERLAY)  continue;
+                        
+                        break find_member;
+                    }
+                    
+                    if !add_data_binding_to_node(parser, field, member)  return false;
                 }
+                
+                // TODO: should we require that exact number of fields are assigned?
+                // if member_index != node_aggregate.fields.count-1 {
+                //     set_typecheck_error(parser, "Incorrect number of fields provided for struct. Array contains % elements, but struct contains % elements.", node_aggregate.fields.count, structure.members.count, node = value_node);
+                //     return false;
+                // }
+                
+                
+              case .ARRAY;
+                array := Any_Array.from(binding);
+                count, data := get_count_and_data(array);
+                index_offset: int; // for dynamic array case, where we want to leave the existing items untouched
+                
+                if array.array_type == {
+                  case .RESIZABLE;
+                    /*
+                        IMPORTANT NOTE: 
+                        It is critical that the proper amount of space is pre-allocated for the dynamic array 
+                        and that we don't have to realloc when we make data bindings for elements below.
+                        Because if we realloc then that invalidates the pointers in the data bindings that we created
+                        for all previous elements, since those are now pointing to the old locations of each element.
+                    */
+                    record_resize(parser, array, count + node_aggregate.fields.count, true);
+                    index_offset = count;
+                    
+                  case .VIEW;
+                    if data == null {
+                        assert(count == 0);
+                        record_resize(parser, array, node_aggregate.fields.count, true);
+                        count = node_aggregate.fields.count; // @HACK: doing this because we read count in the .FIXED case below
+                    }
+                    #through;
+                    
+                  case .FIXED;
+                    if node_aggregate.fields.count > count {
+                        set_typecheck_error(parser, "Bounds check failed on fixed array or view. Array literal contains % elements, but underlying array only contains space for % elements.", node_aggregate.fields.count, count, node = value_node);
+                        return false;
+                    }
+                }
+                
+                count, data = get_count_and_data(array);
+                for node_aggregate.fields {
+                    if !add_data_binding_to_node(parser, it, array[index_offset + it_index])  return false;
+                }
+                
+              case;
+                set_typecheck_error(parser, "Cannot bind value of type % to %", as_type(binding.type), node_aggregate.node_type, node = value_node);
+                return false;
             }
-            
-            count, data = get_count_and_data(array);
-            for node_array.fields {
-                if !add_data_binding_to_node(parser, it, array[index_offset + it_index])  return false;
-            }
-            
-          case;
-            set_typecheck_error(parser, "Cannot bind value of type % to %", as_type(binding.type), node_array.node_type, node = value_node);
-            return false;
         }
     }
     
@@ -473,9 +470,8 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         return VOID_ANY;
         
         
-      case Node_Array; #through;
-      case Node_Object;
-        object := node.(*Node_Object);
+      case Node_Aggregate;
+        object := node.(*Node_Aggregate);
         assert(node.scope.node_type == Node_Field, "%, %", node.scope.node_type, node.scope == script.ast_root);
         
         // TODO: this assumption will very likely need to change
@@ -495,8 +491,7 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
       case Node_Dot;
         dot := node.(*Node_Dot);
         // special case to provide proper type hint to aggregate node
-        if dot.right.node_type == Node_Object
-        || dot.right.node_type == Node_Array {
+        if dot.right.node_type == Node_Aggregate {
             return script.my_evaluate_node(script, dot.right, provided_storage, flags);
         }
         // else just evaluate node using standard procedure
@@ -568,8 +563,7 @@ my_typecheck_node :: (
       case Node_Dot;
         dot := node.(*Node_Dot);
         // special case to provide proper type hint to aggregate node
-        if dot.right.node_type == Node_Object
-        || dot.right.node_type == Node_Array {
+        if dot.right.node_type == Node_Aggregate {
             left_type := parser.my_typecheck_node(parser, dot.left);
             if has_error(parser)  return null;
             if left_type.type != .TYPE {
@@ -602,9 +596,8 @@ my_typecheck_node :: (
         }
         // else just typecheck node using standard procedure
         
-      case Node_Object; #through;
-      case Node_Array;
-        object := node.(*Node_Object);
+      case Node_Aggregate;
+        object := node.(*Node_Aggregate);
         if hint_type == null {
             set_typecheck_error(parser, "Missing type hint on %.", node.node_type, node = node, type = .MISSING_TYPE_HINT, loc = node.location);
             return null;
@@ -733,15 +726,16 @@ my_parse_leaf :: (using script: *Script) -> *Node {
         return expression;
         
       case .OPEN_BRACE;
-        object := alloc_node(script, Node_Object, loc = token.location);
-        object.(*Node_Object).parent = xx script.current_scope;
+        object := alloc_node(script, Node_Aggregate, loc = token.location);
+        object.(*Node_Aggregate).parent = xx script.current_scope;
         assert(script.current_scope.node_type == Node_Field);
         if !parse_object_contents(xx script, object)  return null;
         return object;
         
       case .OPEN_BRACKET;
-        array := alloc_node(script, Node_Array, loc = token.location);
-        array.(*Node_Array).parent = xx script.current_scope;
+        array := alloc_node(script, Node_Aggregate, loc = token.location);
+        array.(*Node_Aggregate).parent = xx script.current_scope;
+        array.(*Node_Aggregate).aggregate_flags |= .OMIT_KEYS;
         assert(script.current_scope.node_type == Node_Field);
         if !parse_array_contents(xx script, array)  return null;
         return array;
@@ -842,15 +836,16 @@ my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node 
             return make_cast(script, dot_token, left, type_expr);
             
           case .OPEN_BRACE;
-            object := alloc_node(script, Node_Object, loc = token.location);
-            object.(*Node_Object).parent = xx script.current_scope;
+            object := alloc_node(script, Node_Aggregate, loc = token.location);
+            object.(*Node_Aggregate).parent = xx script.current_scope;
             assert(script.current_scope.node_type == Node_Field);
             if !parse_object_contents(xx script, object)  return null;
             return make_dot(script, dot_token, left, object);
             
           case .OPEN_BRACKET;
-            array := alloc_node(script, Node_Array, loc = token.location);
-            array.(*Node_Array).parent = xx script.current_scope;
+            array := alloc_node(script, Node_Aggregate, loc = token.location);
+            array.(*Node_Aggregate).parent = xx script.current_scope;
+            array.(*Node_Aggregate).aggregate_flags |= .OMIT_KEYS;
             assert(script.current_scope.node_type == Node_Field);
             if !parse_array_contents(xx script, array)  return null;
             return make_dot(script, dot_token, left, array);
@@ -896,12 +891,8 @@ my_is_valid_lvalue :: (script: *Script, node: *Node, need_lvalue := false, set_a
         if need_lvalue then set_typecheck_error(script, "A Node_Field cannot be used as an lvalue.", node = node);
         return false;
         
-      case Node_Object;
-        if need_lvalue then set_typecheck_error(script, "A Node_Object cannot be used as an lvalue.", node = node);
-        return false;
-        
-      case Node_Array;
-        if need_lvalue then set_typecheck_error(script, "A Node_Array cannot be used as an lvalue.", node = node);
+      case Node_Aggregate;
+        if need_lvalue then set_typecheck_error(script, "A Node_Aggregate cannot be used as an lvalue.", node = node);
         return false;
         
       case Node_Reference;
@@ -916,7 +907,7 @@ parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
     node := alloc_node(parser, Node_Field);
     defer_restore(*parser.current_parent);
     parser.current_parent = node;
-        
+    
     if parent_is_object {
         name_token := get_token(parser);
         node.location = name_token.location;
@@ -970,7 +961,7 @@ parse_field :: (parser: *Parser, parent_is_object: bool) -> *Node_Field {
 
 // TODO: these should really work more like parse_contents_of_struct_literal
 
-parse_array_contents :: (using parser: *Parser, array: *Node_Array) -> bool {
+parse_array_contents :: (using parser: *Parser, array: *Node_Aggregate) -> bool {
     while !expect_token_type(*script, .CLOSE_BRACKET) {
         field := parse_field(parser, false);
         if !field  return false;
@@ -979,7 +970,7 @@ parse_array_contents :: (using parser: *Parser, array: *Node_Array) -> bool {
     return true;
 }
 
-parse_object_contents :: (using parser: *Parser, object: *Node_Object, scope_end_token := Token_Type.CLOSE_BRACE) -> bool {
+parse_object_contents :: (using parser: *Parser, object: *Node_Aggregate, scope_end_token := Token_Type.CLOSE_BRACE) -> bool {
     while !expect_token_type(*script, scope_end_token) {
         field := parse_field(parser, true);
         if !field  return false;

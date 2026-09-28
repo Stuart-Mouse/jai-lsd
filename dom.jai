@@ -37,27 +37,9 @@ Node_Aggregate :: struct {
     aggregate_flags: Aggregate_Flags;
     
     Aggregate_Flags :: enum_flags {
-        NONE :: 0;
+        NONE      :: 0;
         OMIT_KEYS :: 1;
     }
-    
-    #overlay(scope) parent: *Node_Field;
-}
-
-Node_Object :: struct {
-    using #as 
-    base:           Node;
-    fields:         Field_List;
-    value_pointer:  *void;
-    
-    #overlay(scope) parent: *Node_Field;
-}
-
-Node_Array :: struct {
-    using #as 
-    base:           Node;
-    fields:         Field_List;
-    value_pointer:  *void;
     
     #overlay(scope) parent: *Node_Field;
 }
@@ -105,19 +87,19 @@ Node_Reference :: struct {
 
 get_fields :: inline (field: *Node_Field) -> *Field_List {
     assert(is_aggregate(field));
-    return *field.value.(*Node_Object).fields;
+    return *field.value.(*Node_Aggregate).fields;
 }
 
 is_object :: inline (field: *Node_Field) -> bool {
-    return field && field.value && field.value.node_type == Node_Object;
+    return is_aggregate(field) && !(field.value.(*Node_Aggregate).aggregate_flags & .OMIT_KEYS);
 }
 
 is_array :: inline (field: *Node_Field) -> bool {
-    return field && field.value && field.value.node_type == Node_Array;
+    return is_aggregate(field) && (field.value.(*Node_Aggregate).aggregate_flags & .OMIT_KEYS == .OMIT_KEYS);
 }
 
 is_aggregate :: inline (field: *Node_Field) -> bool {
-    return field && field.value && field.value && (field.value.node_type == Node_Object || field.value.node_type == Node_Array);
+    return field && field.value && field.value.node_type == Node_Aggregate;
 }
 
 Node_Insert_Mode :: enum {
@@ -179,15 +161,12 @@ find_child_node_by_name :: (parent: *Node_Field, name: string) -> (*Node_Field, 
 }
 
 append_child_node :: (parser: *Parser, parent: *Node_Field, node: *Node_Field, prepend := false) -> *Node_Field {
-    return append_child_node(parser, parent.value.(*Node_Object), node, prepend);
+    return append_child_node(parser, parent.value.(*Node_Aggregate), node, prepend);
 }
 
-append_child_node :: (parser: *Parser, array: *Node_Array, node: *Node_Field, prepend := false) -> *Node_Field {
-    return append_child_node(parser, array.(*Node_Object), node, prepend);
-}
-append_child_node :: (parser: *Parser, object: *Node_Object, node: *Node_Field, prepend := false) -> *Node_Field {
-    assert(object.node_type == Node_Object || object.node_type == Node_Array, "Node type was %", node.node_type);
-    fields := *object.fields; // NOTE: this is valid for both Node_Object and Node_Array
+append_child_node :: (parser: *Parser, object: *Node_Aggregate, node: *Node_Field, prepend := false) -> *Node_Field {
+    assert(object.node_type == Node_Aggregate, "Node type was %", node.node_type);
+    fields := *object.fields;
     
     if !node then node = alloc_node(parser, Node_Field);
     

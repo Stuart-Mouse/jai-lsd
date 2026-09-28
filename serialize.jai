@@ -202,7 +202,7 @@ insert_data_node :: (parser: *Parser, parent: *Node_Field, path: string, data_bi
                         return null;
                     }
                     
-                    node.value = alloc_node(parser, Node_Object);
+                    node.value = alloc_node(parser, Node_Aggregate);
                     // TODO: need to verify that element type is struct and has io data defining name member
                     for array {
                         // TODO: allocation strategy for element_name?
@@ -217,7 +217,7 @@ insert_data_node :: (parser: *Parser, parent: *Node_Field, path: string, data_bi
                     return node;
                 }
                 if io_data.flags & .IS_INDEXED_ARRAY {
-                    node.value = alloc_node(parser, Node_Object);
+                    node.value = alloc_node(parser, Node_Aggregate);
                     for array {
                         element_name := tprint("%", it_index);
                         insert_data_node(parser, node, element_name, it);
@@ -226,7 +226,8 @@ insert_data_node :: (parser: *Parser, parent: *Node_Field, path: string, data_bi
                 }
             }
             
-            node.value = alloc_node(parser, Node_Array);
+            node.value = alloc_node(parser, Node_Aggregate);
+            node.value.(*Node_Aggregate).aggregate_flags |= .OMIT_KEYS;
             for array  insert_data_node(parser, node, "", it);
             return node;
         }
@@ -234,14 +235,15 @@ insert_data_node :: (parser: *Parser, parent: *Node_Field, path: string, data_bi
       case .STRUCT;
         structure := Any_Structure.from(binding);
         if io_data && io_data.flags & .SERIALIZE_AS_ARRAY {
-            node.value = alloc_node(parser, Node_Array);
+            node.value = alloc_node(parser, Node_Aggregate);
+            node.value.(*Node_Aggregate).aggregate_flags |= .OMIT_KEYS;
             for structure {
                 insert_data_node(parser, node, "", it);
             }
             return node;
         }
         
-        node.value = alloc_node(parser, Node_Object);
+        node.value = alloc_node(parser, Node_Aggregate);
         for structure {
             insert_data_node(parser, node, it_info.name, it);
         }
