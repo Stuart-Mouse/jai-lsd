@@ -680,3 +680,44 @@ We will still want to temporarily allow using square brackets as well so that we
 I think this change to aggregate syntax will also accompany a change to replace the colon with `=`, which gets us closer to being able to just parse LSD blocks using the same code we use for normal blocks in LS 
 Once again I think the first step will be to just allow th euser to use both and then I can update files incremetally to use the new syntax
 
+
+Whether or not we actually switch from using colons to using equal signs, we need to add some logic to disable assignment operators within LSD.
+
+
+
+# The big questions
+
+
+So now that my brain is utterly scrambled for the day and I have no idea what direction to go with things, I am wondering: what utility are we actually getting out of LSD that we could not just get with LS?
+It seems that in practice I am not rally using the declarative aspects of the language, so any kind of out-of-order resolution does not seem to really be worthwhile
+    The one case where it may be is once I get an automatic id system set up for things like tilemaps, in which case it could be very useful to be able to resolve ids for tiles in an out-of-order manner.
+The biggest, most obvious benefit is that LSD actually handles all the allocation stuff that needs to happen for arrays, and this logic is nowhere in LS because we don't really allocate anything at all in LS unless it's in temp
+    so that's a big difference
+the syntax itself is also quite beneficial 
+    the ability to have arrays of named structures is quite useful, though we could certainly get by without it, just assigning names in the usual way
+    the abilty to convert strings to any value is also quite useful, though again, we could implement some similar functionality in LS directly
+        Could use hash-strings to indicate string-to-X literals, with an optional preceding type specifier e.g.: `Date.#"09/28/2026"`
+we also have the rebinding stuff, but I am not sure if I use that enough to make it worth keeping
+we have enum-indexing for arrays, but this is not so important when Enumerated_Array is available
+we do have custom serialization specifiers, which are very handy if you want to be able to write out data and have it stay in your preferred format
+
+
+ok so we have:
+    general syntax
+    automatic allocations for arrays (and maybe pointers)
+    parse_proc / serialize_proc
+    serialization with flags
+    separation of lexical structure from internal data structures
+    integer-indexing for arrays
+    separate code paths mean better error reporting and such
+    
+after thinking for a moment, I think it does pull its weight for now.
+
+
+I hate to say it but I have no idea how to merge LS and LSD, and I also don't want to stop using LSD entirely in favor of LS, since the features it has are pretty nice for data.
+Perhaps it would be possible to do more to merge them if we had beefy data scopes in LS that acted more like LSD fields, but I just have no clear idea on what that will look like right now.
+
+While I ama rambling:
+the ultimate goal for both LS and LSD wrt the game would be to have a fully-integrated, rich semantic structure that represents the entire level (or game) state
+there would be procedural aspects to this, particularly the init and update scripts that run within levels,
+but there would also be more declarative or data-focused parts, such as the VMS and data already loaded by LSD.

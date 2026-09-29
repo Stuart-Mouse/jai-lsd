@@ -3,7 +3,7 @@
 Parser :: struct {
     using #as script: Script;
     
-    // #overlay(script.ast_root);
+    #overlay(script.ast_root)
     dom_root: *Node_Field;
     
     // TODO: Perhaps instead of tracking all allocations, we can just make note of allocations where they occur and free them as we unwind after an error occurs.
@@ -26,6 +26,9 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
     parser.my_typecheck_node  = xx my_typecheck_node;
     parser.my_evaluate_node   = my_evaluate_node;
     parser.my_is_valid_lvalue = my_is_valid_lvalue;
+    
+    parser.resolve_builtin_operation = my_resolve_builtin_operation;
+    parser.flags |= .DISABLE_DEFAULT_OPERATOR_EQUALS;
     
     register_common_types(*parser.script);
     
@@ -666,6 +669,28 @@ make_reference :: (script: *Script, type: Reference_Type, path: string) -> *Node
     ref.field_path     = path;
     return ref;
 }
+
+
+
+my_resolve_builtin_operation :: (
+    identifier:     string, 
+    type:           Operator_Info.Lexical_Type, 
+    left_type:      *Type_Info, 
+    right_type:     *Type_Info
+) -> (
+    id:             Builtin_Operation_ID, 
+    swap_args:      bool
+) {
+    operation_id, swap_arguments := default_resolve_builtin_operation(identifier, type, left_type, right_type);
+    if operation_id >= 0 {
+        operator_lexical_type := BUILTIN_OPERATIONS[operation_id].type;
+        if operator_lexical_type == .ASSIGNMENT {
+            return -1, false;
+        }
+    }
+    return operation_id, swap_arguments;
+}
+
 
 // Custom versions of parse_leaf and parse_binary are implemented here to remove some of the LS features which we do not want to use in LSD.
 
