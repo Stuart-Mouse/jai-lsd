@@ -3,13 +3,11 @@
 Parser :: struct {
     using #as script: Script;
     
-    #overlay(script.ast_root)
-    dom_root: *Node_Field;
+    #overlay(ast_root)      dom_root:       *Node_Field;
+    #overlay(current_scope) current_parent: *Node_Field;
     
     // TODO: Perhaps instead of tracking all allocations, we can just make note of allocations where they occur and free them as we unwind after an error occurs.
     allocations: [..] LS.Allocation;
-    
-    #overlay(current_scope) current_parent: *Node_Field;
 };
 
 init_parser :: (parser: *Parser, file: string, file_path := "") {
