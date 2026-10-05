@@ -140,7 +140,7 @@ serialize_dom_node :: (parser: *Parser, node: *Node_Field, builder: *String_Buil
         
         append(builder, ifx _is_array then "]" else "}");
     } else {
-        print_node(parser, node.value, builder, indent);
+        parser.print_node(parser, node.value, builder, indent);
         append(builder, ", ");
     }
     

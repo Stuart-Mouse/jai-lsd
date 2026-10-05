@@ -19,13 +19,13 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
         .{ .PREFIX, "$",  8, "" },
     );
     
-    parser.my_parse_leaf      = my_parse_leaf;
-    parser.my_parse_binary    = my_parse_binary;
-    parser.my_typecheck_node  = xx my_typecheck_node;
-    parser.my_evaluate_node   = my_evaluate_node;
-    parser.my_is_valid_lvalue = my_is_valid_lvalue;
+    parser.parse_leaf      = LSD_parse_leaf;
+    parser.parse_binary    = LSD_parse_binary;
+    parser.typecheck_node  = LSD_typecheck_node;
+    parser.evaluate_node   = LSD_evaluate_node;
+    parser.is_valid_lvalue = LSD_is_valid_lvalue;
     
-    parser.resolve_builtin_operation = my_resolve_builtin_operation;
+    parser.resolve_builtin_operation = LSD_resolve_builtin_operation;
     parser.flags |= .DISABLE_DEFAULT_OPERATOR_EQUALS;
     
     register_common_types(*parser.script);
@@ -70,10 +70,10 @@ add_data_bindings_to_dom :: (parser: *Parser, bindings: [] struct { binding: Any
 process_data_bindings :: (parser: *Parser) -> bool {
     fields := get_fields(parser.dom_root);
     for fields {
-        if !parser.my_typecheck_node(parser, it)  return false;
+        if !parser.typecheck_node(parser, it)  return false;
     }
     for fields {
-        parser.my_evaluate_node(parser, it);
+        parser.evaluate_node(parser, it);
         if has_error(parser)  return false;
     }
     return true;
@@ -371,7 +371,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
 }
 
 // NOTE: Since fields all store their own bindings, we have no need to use the standard hint_storage mechanism for fields and objects.
-my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = null, flags := Evaluation_Flags.NONE) -> Any {
+LSD_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = null, flags := Evaluation_Flags.NONE) -> Any {
     // log("evaluating % @ %", node.node_type, node);
     // log("provided_storage: %", provided_storage);
     // if node.node_type == Node_Field { 
@@ -495,23 +495,25 @@ my_evaluate_node :: (script: *Script, node: *Node, provided_storage: *void = nul
         dot := node.(*Node_Dot);
         // special case to provide proper type hint to aggregate node
         if dot.right.node_type == Node_Aggregate {
-            return script.my_evaluate_node(script, dot.right, provided_storage, flags);
+            return script.evaluate_node(script, dot.right, provided_storage, flags);
         }
         // else just evaluate node using standard procedure
     }
     
     // the node wasn't any of our special types, so default to the standard evaluate_node
-    return evaluate_node(script, node, provided_storage, flags);
+    return default_evaluate_node(script, node, provided_storage, flags);
 }
 
-my_typecheck_node :: (
-    parser:         *Parser,
+LSD_typecheck_node :: (
+    script:         *Script,
     node:           *Node, 
     check_flags:    Typechecking_Flags = .NONE,
     hint_type:      *Type_Info         = null
 ) -> (
     value_type:     *Type_Info
 ) {
+    parser := script.(*Parser);
+    
     if node.node_type == {
       case Node_Field;
         field := node.(*Node_Field);
@@ -545,7 +547,7 @@ my_typecheck_node :: (
         defer_restore(*parser.current_parent);
         parser.current_parent = field;
         
-        value_type := parser.my_typecheck_node(parser, field.value, hint_type = field.binding.type);
+        value_type := parser.typecheck_node(parser, field.value, hint_type = field.binding.type);
         if !value_type  return null;
         
         // NOTE: if an io data parse proc is present, then the value_type of the RHS can always be a string
@@ -567,7 +569,7 @@ my_typecheck_node :: (
         dot := node.(*Node_Dot);
         // special case to provide proper type hint to aggregate node
         if dot.right.node_type == Node_Aggregate {
-            left_type := parser.my_typecheck_node(parser, dot.left);
+            left_type := parser.typecheck_node(parser, dot.left);
             if has_error(parser)  return null;
             if left_type.type != .TYPE {
                 set_typecheck_error(parser, "Left-hand side of dot-aggregate expression must be a type.", node = dot.left);
@@ -579,14 +581,14 @@ my_typecheck_node :: (
                 return null;
             }
             
-            my_evaluate_node(parser, dot.left);
+            parser.evaluate_node(parser, dot.left);
             if has_error(parser)  return null;
             namespace := pop_as(*parser.stack, *Type_Info);
             
             if namespace.type == {
               case .STRUCT; #through;
               case .ARRAY;
-                right_type := parser.my_typecheck_node(parser, dot.right, hint_type = namespace);
+                right_type := parser.typecheck_node(parser, dot.right, hint_type = namespace);
                 if has_error(parser)  return null;
                 assert(namespace == right_type, "Type returned by right side of aggregate literal (%) expression did not match type specified on left side of dot (%)", as_type(right_type), as_type(namespace));
                 dot.value_type = namespace;
@@ -616,7 +618,7 @@ my_typecheck_node :: (
         }
         
         for object.fields {
-            if !parser.my_typecheck_node(parser, it)  return null;
+            if !parser.typecheck_node(parser, it)  return null;
         }
         return object.value_type;
         
@@ -642,7 +644,7 @@ my_typecheck_node :: (
         }
         
         // jump to referenced node
-        if !parser.my_typecheck_node(parser, reference.resolved_field)  return null;
+        if !parser.typecheck_node(parser, reference.resolved_field)  return null;
         
         if reference.reference_type == {
           case .VALUE; reference.value_type = reference.resolved_field.binding.type;
@@ -659,7 +661,7 @@ my_typecheck_node :: (
     }
     
     // defer to default typecheck_node if it wasn't one out our special node types
-    return typecheck_node(parser, node, check_flags, hint_type);
+    return default_typecheck_node(parser, node, check_flags, hint_type);
 }
 
 
@@ -672,7 +674,7 @@ make_reference :: (script: *Script, type: Reference_Type, path: string) -> *Node
 
 
 
-my_resolve_builtin_operation :: (
+LSD_resolve_builtin_operation :: (
     identifier:     string, 
     type:           Operator_Info.Lexical_Type, 
     left_type:      *Type_Info, 
@@ -694,7 +696,7 @@ my_resolve_builtin_operation :: (
 
 // Custom versions of parse_leaf and parse_binary are implemented here to remove some of the LS features which we do not want to use in LSD.
 
-my_parse_leaf :: (lexer: *Lexer) -> *Node {
+LSD_parse_leaf :: (lexer: *Lexer) -> *Node {
     token := get_token(lexer);
     
     is_operator, operator_id := get_prefix_operator(lexer.script, token);
@@ -720,7 +722,7 @@ my_parse_leaf :: (lexer: *Lexer) -> *Node {
             return make_reference(lexer.script, .INDEX, string_token.text);
         }
         
-        left := lexer.script.my_parse_expression(lexer, operator_info.precedence);
+        left := lexer.parse_expression(lexer, operator_info.precedence);
         if left == null  return null;
         return make_operator(lexer.script, token, operator_id, left, null);
     }
@@ -739,7 +741,7 @@ my_parse_leaf :: (lexer: *Lexer) -> *Node {
       case .OPEN_PAREN;
         open_paren_location := token.location;
         
-        expression := lexer.script.my_parse_expression(lexer, 0);
+        expression := lexer.parse_expression(lexer, 0);
         if expression == null  return null;
         expression.flags |= .PARENTHESIZED;
         
@@ -824,7 +826,7 @@ my_parse_leaf :: (lexer: *Lexer) -> *Node {
     return null;
 }
 
-my_parse_binary :: (lexer: *Lexer, left: *Node, min_prec: int) -> *Node {
+LSD_parse_binary :: (lexer: *Lexer, left: *Node, min_prec: int) -> *Node {
     token := peek_token(lexer);
     
     // In addition to normal binary operators, we have a few binary-operator-like constructs that have essentially infinite operator precedence.
@@ -847,7 +849,7 @@ my_parse_binary :: (lexer: *Lexer, left: *Node, min_prec: int) -> *Node {
             return make_dot(lexer.script, dot_token, left, identifier);
             
           case .OPEN_PAREN;
-            type_expr := lexer.script.my_parse_expression(lexer, 0);
+            type_expr := lexer.parse_expression(lexer, 0);
             close_paren := get_token(lexer);
             if close_paren.type != .CLOSE_PAREN {
                 set_parse_error(lexer.script, "Unexpected token '%' in cast type expression. Expected a closing paren.", close_paren.type, loc = close_paren.location);
@@ -873,7 +875,7 @@ my_parse_binary :: (lexer: *Lexer, left: *Node, min_prec: int) -> *Node {
       case .OPEN_BRACKET;
         open_bracket_token := get_token(lexer);
         
-        indexing_expr := lexer.script.my_parse_expression(lexer, 0);
+        indexing_expr := lexer.parse_expression(lexer, 0);
         if indexing_expr == null  return null;
         if !expect_token_type(lexer, .CLOSE_BRACKET)  return null;
         
@@ -888,7 +890,7 @@ my_parse_binary :: (lexer: *Lexer, left: *Node, min_prec: int) -> *Node {
         if operator_info.precedence <= min_prec  return left;
         
         operator_token := get_token(lexer);
-        right := lexer.script.my_parse_expression(lexer, operator_info.precedence);
+        right := lexer.parse_expression(lexer, operator_info.precedence);
         if right == null  return null;
         
         return make_operator(lexer.script, operator_token, operator_id, left, right);
@@ -897,7 +899,7 @@ my_parse_binary :: (lexer: *Lexer, left: *Node, min_prec: int) -> *Node {
     return left;
 }
 
-my_is_valid_lvalue :: (script: *Script, node: *Node, need_lvalue := false, set_as_lvalue := false) -> bool {
+LSD_is_valid_lvalue :: (script: *Script, node: *Node, need_lvalue := false, set_as_lvalue := false) -> bool {
     need_lvalue ||= set_as_lvalue;
     if set_as_lvalue then node.flags |= .PUSH_BY_POINTER;
     
@@ -915,7 +917,7 @@ my_is_valid_lvalue :: (script: *Script, node: *Node, need_lvalue := false, set_a
         return true;
     }
     
-    return is_valid_lvalue(script, node, need_lvalue, set_as_lvalue);
+    return default_is_valid_lvalue(script, node, need_lvalue, set_as_lvalue);
 }
 
 parse_field :: (lexer: *Lexer) -> *Node_Field {
@@ -948,7 +950,7 @@ parse_field :: (lexer: *Lexer) -> *Node_Field {
         }
     }
     
-    node.value = parser.my_parse_expression(lexer, 0);
+    node.value = parser.parse_expression(lexer, 0);
     if node.value == null {
         if !has_error(parser) {
             set_parse_error(parser, "Expected an expression for field value.", node = node);
