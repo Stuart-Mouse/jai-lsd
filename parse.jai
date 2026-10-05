@@ -30,8 +30,6 @@ init_parser :: (parser: *Parser, file: string, file_path := "") {
     
     register_common_types(*parser.script);
     
-    init_lexer(parser, file, location = .{ file_path, 1, 1 });
-    
     parser.dom_root       = alloc_node(parser, Node_Field);
     parser.current_parent = parser.dom_root;
     parser.dom_root.value = alloc_node(parser, Node_Aggregate);
@@ -49,7 +47,11 @@ deinit_parser :: (parser: *Parser) {
 parse_file_to_dom :: (file: string, filepath := "") -> (Parser, bool) {
     parser: Parser;
     init_parser(*parser, file, filepath);
-    ok := parse_contents_of_aggregate(*parser, parser.dom_root.value.(*Node_Aggregate), .EOF);
+    
+    lexer: Lexer;
+    init_lexer(*lexer, *parser, file, location = .{ filepath, 1, 1 });
+    
+    ok := parse_contents_of_aggregate(*lexer, parser.dom_root.value.(*Node_Aggregate), .EOF);
     return parser, ok;
 }
 
@@ -692,128 +694,128 @@ my_resolve_builtin_operation :: (
 
 // Custom versions of parse_leaf and parse_binary are implemented here to remove some of the LS features which we do not want to use in LSD.
 
-my_parse_leaf :: (using script: *Script) -> *Node {
-    token := get_token(script);
+my_parse_leaf :: (lexer: *Lexer) -> *Node {
+    token := get_token(lexer);
     
-    is_operator, operator_id := get_prefix_operator(script, token);
+    is_operator, operator_id := get_prefix_operator(lexer.script, token);
     if is_operator {
-        operator_info := get_operator_info(script, operator_id);
+        operator_info := get_operator_info(lexer.script, operator_id);
         // special cases, bit of a parsing hack for the field reference operators
         // maybe later we will add the ability to have comptime operators more generally
         if token.text == {
           case "$";
-            string_token := get_token(script);
+            string_token := get_token(lexer);
             if string_token.type != .STRING {
-                set_parse_error(script, "Expected a path string after node reference operator.", loc = token.location);
+                set_parse_error(lexer.script, "Expected a path string after node reference operator.", loc = token.location);
                 return null;
             }
-            return make_reference(script, .VALUE, string_token.text);
+            return make_reference(lexer.script, .VALUE, string_token.text);
             
           case "&";
-            string_token := get_token(script);
+            string_token := get_token(lexer);
             if string_token.type != .STRING {
-                set_parse_error(script, "Expected a path string after node reference operator.", loc = token.location);
+                set_parse_error(lexer.script, "Expected a path string after node reference operator.", loc = token.location);
                 return null;
             }
-            return make_reference(script, .INDEX, string_token.text);
+            return make_reference(lexer.script, .INDEX, string_token.text);
         }
         
-        left := my_parse_expression(script, operator_info.precedence);
+        left := lexer.script.my_parse_expression(lexer, operator_info.precedence);
         if left == null  return null;
-        return make_operator(script, token, operator_id, left, null);
+        return make_operator(lexer.script, token, operator_id, left, null);
     }
     
     if token.type == {
       case .DOT;
-        token_after_dot := get_token(script);
+        token_after_dot := get_token(lexer);
         if token_after_dot.type == .IDENTIFIER {
-            identifier := make_identifier(script, token_after_dot);
-            return make_dot(script, token, null, identifier);
+            identifier := make_identifier(lexer.script, token_after_dot);
+            return make_dot(lexer.script, token, null, identifier);
         } else {
-            set_parse_error(script, "Unexpected % token '%' after unary dot.", token_after_dot.type, token_after_dot.text, loc = token_after_dot.location);
+            set_parse_error(lexer.script, "Unexpected % token '%' after unary dot.", token_after_dot.type, token_after_dot.text, loc = token_after_dot.location);
             return null;
         }
         
       case .OPEN_PAREN;
         open_paren_location := token.location;
         
-        expression := my_parse_expression(script, 0);
+        expression := lexer.script.my_parse_expression(lexer, 0);
         if expression == null  return null;
         expression.flags |= .PARENTHESIZED;
         
-        close_paren_token := get_token(script);
+        close_paren_token := get_token(lexer);
         if close_paren_token.type != .CLOSE_PAREN {
-            set_parse_error(script, "Expected a closing paren for open paren at %.", open_paren_location, loc = close_paren_token.location);
+            set_parse_error(lexer.script, "Expected a closing paren for open paren at %.", open_paren_location, loc = close_paren_token.location);
             return null;
         }
         return expression;
         
       case .OPEN_BRACKET; #through;
       case .OPEN_BRACE;
-        object := alloc_node(script, Node_Aggregate, loc = token.location);
-        object.(*Node_Aggregate).parent = xx script.current_scope;
-        assert(script.current_scope.node_type == Node_Field);
+        object := alloc_node(lexer.script, Node_Aggregate, loc = token.location);
+        object.(*Node_Aggregate).parent = xx lexer.script.current_scope;
+        assert(lexer.script.current_scope.node_type == Node_Field);
         
         scope_end_token := ifx token.type == .OPEN_BRACE then Token_Type.CLOSE_BRACE else .CLOSE_BRACKET;
-        if !parse_contents_of_aggregate(xx script, object, scope_end_token)  return null;
+        if !parse_contents_of_aggregate(lexer, object, scope_end_token)  return null;
         return object;
         
       case .TRUE;
-        literal := alloc_node(script, Node_Literal, loc = token.location, trivia = token.trivia);
+        literal := alloc_node(lexer.script, Node_Literal, loc = token.location, trivia = token.trivia);
         literal.literal_type = .BOOLEAN;
         literal.number       = to_any_number(true);
         return literal;
         
       case .FALSE;
-        literal := alloc_node(script, Node_Literal, loc = token.location, trivia = token.trivia);
+        literal := alloc_node(lexer.script, Node_Literal, loc = token.location, trivia = token.trivia);
         literal.literal_type = .BOOLEAN;
         literal.number       = to_any_number(false);
         return literal;
         
       case .NUMBER;
-        return make_number_literal(script, token);
+        return make_number_literal(lexer.script, token);
         
       case .STRING;
-        return make_string_literal(script, token);
+        return make_string_literal(lexer.script, token);
         
       case .IDENTIFIER;
-        return make_identifier(script, token);
+        return make_identifier(lexer.script, token);
         
       case .DIRECTIVE;
-        directive := alloc_node(script, Node_Directive, loc = token.location, trivia = token.trivia);
+        directive := alloc_node(lexer.script, Node_Directive, loc = token.location, trivia = token.trivia);
         directive.name = token.text;
         
         directive.directive_index = -1;
-        for script.directives {
+        for lexer.script.directives {
             if it.name == directive.name {
                 directive.directive_index = it_index;
             }
         }
         if directive.directive_index == -1 {
-            set_parse_error(script, "Unable to resolve directive '%'\n", directive.name, loc = directive.location);
+            set_parse_error(lexer.script, "Unable to resolve directive '%'\n", directive.name, loc = directive.location);
             return null;
         }
         
-        open_paren_token := get_token(script);
+        open_paren_token := get_token(lexer);
         if open_paren_token.type != .OPEN_PAREN {
-            set_parse_error(script, "Expected an open paren after directive name!\n", loc = open_paren_token.location);
+            set_parse_error(lexer.script, "Expected an open paren after directive name!\n", loc = open_paren_token.location);
             return null;
         }
         
-        if !expect_token_type(script, .CLOSE_PAREN) {
-            expressions := parse_comma_separated_expressions(script,, temp);
+        if !expect_token_type(lexer, .CLOSE_PAREN) {
+            expressions := parse_comma_separated_expressions(lexer,, temp);
             if !expressions  return null;
-            directive.arguments = array_copy(expressions,, LS.get_allocator(script));
+            directive.arguments = array_copy(expressions,, LS.get_allocator(lexer.script));
             
-            close_paren_token := get_token(script);
+            close_paren_token := get_token(lexer);
             if close_paren_token.type != .CLOSE_PAREN {
-                set_parse_error(script, "Expected a closing paren after arguments of directive. Instead we saw %\n", close_paren_token.text, loc = close_paren_token.location);
+                set_parse_error(lexer.script, "Expected a closing paren after arguments of directive. Instead we saw %\n", close_paren_token.text, loc = close_paren_token.location);
                 return null;
             }
         }
         
-        if !evaluate_directive(script, directive, .PARSE) {
-            set_parse_error(script, "Failed while trying to execute a directive during parsing.", loc = token.location, node = directive);
+        if !evaluate_directive(lexer.script, directive, .PARSE) {
+            set_parse_error(lexer.script, "Failed while trying to execute a directive during parsing.", loc = token.location, node = directive);
             return null;
         }
         return directive;
@@ -822,74 +824,74 @@ my_parse_leaf :: (using script: *Script) -> *Node {
     return null;
 }
 
-my_parse_binary :: (using script: *Script, left: *Node, min_prec: int) -> *Node {
-    token := peek_token(script);
+my_parse_binary :: (lexer: *Lexer, left: *Node, min_prec: int) -> *Node {
+    token := peek_token(lexer);
     
     // In addition to normal binary operators, we have a few binary-operator-like constructs that have essentially infinite operator precedence.
     // These are open parenthesis for procedure calls, dot for struct member access and cast, and open bracket for array indexing.
     if token.type == {
       case .OPEN_PAREN;
-        get_token(script);
-        arg_exprs, ok := parse_procedure_arguments(script);
+        get_token(lexer);
+        arg_exprs, ok := parse_procedure_arguments(lexer);
         if !ok  return null;
-        return make_procedure_call(script, token, left, arg_exprs);
+        return make_procedure_call(lexer.script, token, left, arg_exprs);
         
         
       case .DOT;
-        dot_token := get_token(script);
+        dot_token := get_token(lexer);
         
-        token_after_dot := get_token(script);
+        token_after_dot := get_token(lexer);
         if token_after_dot.type == {
           case .IDENTIFIER;
-            identifier := make_identifier(script, token_after_dot);
-            return make_dot(script, dot_token, left, identifier);
+            identifier := make_identifier(lexer.script, token_after_dot);
+            return make_dot(lexer.script, dot_token, left, identifier);
             
           case .OPEN_PAREN;
-            type_expr := my_parse_expression(script, 0);
-            close_paren := get_token(script);
+            type_expr := lexer.script.my_parse_expression(lexer, 0);
+            close_paren := get_token(lexer);
             if close_paren.type != .CLOSE_PAREN {
-                set_parse_error(script, "Unexpected token '%' in cast type expression. Expected a closing paren.", close_paren.type, loc = close_paren.location);
+                set_parse_error(lexer.script, "Unexpected token '%' in cast type expression. Expected a closing paren.", close_paren.type, loc = close_paren.location);
                 return null;
             }
-            return make_cast(script, dot_token, left, type_expr);
+            return make_cast(lexer.script, dot_token, left, type_expr);
             
           case .OPEN_BRACKET; #through;
           case .OPEN_BRACE;
-            object := alloc_node(script, Node_Aggregate, loc = token.location);
-            object.parent = xx script.current_scope;
-            assert(script.current_scope.node_type == Node_Field);
+            object := alloc_node(lexer.script, Node_Aggregate, loc = token.location);
+            object.parent = xx lexer.script.current_scope;
+            assert(lexer.script.current_scope.node_type == Node_Field);
             
             scope_end_token := ifx token.type == .OPEN_BRACE then Token_Type.CLOSE_BRACE else .CLOSE_BRACKET;
-            if !parse_contents_of_aggregate(xx script, object, scope_end_token)  return null;
-            return make_dot(script, dot_token, left, object);
+            if !parse_contents_of_aggregate(lexer, object, scope_end_token)  return null;
+            return make_dot(lexer.script, dot_token, left, object);
         }
         
-        set_parse_error(script, "Unexpected % token '%' after dot.", token.type, token.text, loc = token.location);
+        set_parse_error(lexer.script, "Unexpected % token '%' after dot.", token.type, token.text, loc = token.location);
         return null;
         
         
       case .OPEN_BRACKET;
-        open_bracket_token := get_token(script);
+        open_bracket_token := get_token(lexer);
         
-        indexing_expr := my_parse_expression(script, 0);
+        indexing_expr := lexer.script.my_parse_expression(lexer, 0);
         if indexing_expr == null  return null;
-        if !expect_token_type(script, .CLOSE_BRACKET)  return null;
+        if !expect_token_type(lexer, .CLOSE_BRACKET)  return null;
         
-        return make_subscript(script, open_bracket_token, left, indexing_expr);
+        return make_subscript(lexer.script, open_bracket_token, left, indexing_expr);
     }
     
     // We only consume the binary operator here if it is of a higher precedence than the previous binary operator.
     // If we hit a binary operator but its precedence is too low, we return left back to caller.
-    is_operator, operator_id := get_binary_operator(script, token);
+    is_operator, operator_id := get_binary_operator(lexer.script, token);
     if is_operator {
-        operator_info := get_operator_info(script, operator_id);
+        operator_info := get_operator_info(lexer.script, operator_id);
         if operator_info.precedence <= min_prec  return left;
         
-        operator_token := get_token(script);
-        right := my_parse_expression(script, operator_info.precedence);
+        operator_token := get_token(lexer);
+        right := lexer.script.my_parse_expression(lexer, operator_info.precedence);
         if right == null  return null;
         
-        return make_operator(script, operator_token, operator_id, left, right);
+        return make_operator(lexer.script, operator_token, operator_id, left, right);
     }
     
     return left;
@@ -916,20 +918,21 @@ my_is_valid_lvalue :: (script: *Script, node: *Node, need_lvalue := false, set_a
     return is_valid_lvalue(script, node, need_lvalue, set_as_lvalue);
 }
 
-parse_field :: (parser: *Parser) -> *Node_Field {
-    node := alloc_node(parser, Node_Field);
-    node.location = parser.lexer.location;
+parse_field :: (lexer: *Lexer) -> *Node_Field {
+    parser := lexer.script.(*Parser);
+    
+    node := alloc_node(parser, Node_Field, loc = lexer.location);
     defer_restore(*parser.current_parent);
     parser.current_parent = node;
     
     
     {
-        name_token  := peek_token(parser, 0);
-        colon_token := peek_token(parser, 1);
+        name_token  := peek_token(lexer, 0);
+        colon_token := peek_token(lexer, 1);
         
         if colon_token.type == .COLON {
-            get_token(parser);
-            get_token(parser);
+            get_token(lexer);
+            get_token(lexer);
             
             if name_token.type == {
               case .IDENTIFIER; #through;
@@ -945,7 +948,7 @@ parse_field :: (parser: *Parser) -> *Node_Field {
         }
     }
     
-    node.value = parser.my_parse_expression(parser, 0);
+    node.value = parser.my_parse_expression(lexer, 0);
     if node.value == null {
         if !has_error(parser) {
             set_parse_error(parser, "Expected an expression for field value.", node = node);
@@ -958,12 +961,12 @@ parse_field :: (parser: *Parser) -> *Node_Field {
         node.location = node.value.location;
     }
     
-    next_token := peek_token(parser);
+    next_token := peek_token(lexer);
     if next_token.type == {
       case .CLOSE_BRACE;
       case .CLOSE_BRACKET;
       case .EOF;
-      case .COMMA; get_token(parser);
+      case .COMMA; get_token(lexer);
       case;
         set_parse_error(parser, "Unexpected % token, expected end of scope or expression delimiter.", next_token.type, node = node);
         return null;
@@ -972,18 +975,19 @@ parse_field :: (parser: *Parser) -> *Node_Field {
     return node;
 }
 
-parse_contents_of_aggregate :: (using parser: *Parser, object: *Node_Aggregate, scope_end_token := Token_Type.CLOSE_BRACE) -> bool {
+parse_contents_of_aggregate :: (lexer: *Lexer, object: *Node_Aggregate, scope_end_token := Token_Type.CLOSE_BRACE) -> bool {
+    parser := lexer.script.(*Parser);
     first_field_has_name := -1; // -1 means we have not yet set this value, after that we treat this as a boolean.
     
-    while !expect_token_type(*script, scope_end_token) {
-        field := parse_field(parser);
+    while !expect_token_type(lexer, scope_end_token) {
+        field := parse_field(lexer);
         if !field  return false;
         
         this_field_has_name := (field.name != "").(int);
         if first_field_has_name == -1 {
             first_field_has_name = this_field_has_name;
         } else if first_field_has_name != this_field_has_name {
-            set_parse_error(*script, "Explicit member assignments cannot be mixed with simple comma-separated expressions in an aggregate.", loc = field.location);
+            set_parse_error(lexer.script, "Explicit member assignments cannot be mixed with simple comma-separated expressions in an aggregate.", loc = field.location);
             return false;
         }
         
