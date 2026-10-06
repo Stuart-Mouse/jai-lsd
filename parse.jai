@@ -604,7 +604,7 @@ LSD_typecheck_node :: (
       case Node_Aggregate;
         object := node.(*Node_Aggregate);
         if hint_type == null {
-            set_typecheck_error(parser, "Missing type hint on %.", node.node_type, node = node, type = .MISSING_TYPE_HINT, loc = node.location);
+            set_typecheck_error(parser, "Missing type hint on %.", node.node_type, node = node, type = .MISSING_TYPE_HINT);
             return null;
         }
         object.value_type = hint_type;
@@ -629,7 +629,7 @@ LSD_typecheck_node :: (
         
         resolved_field, resolved_index := find_node_by_path(xx parser, field.parent, reference.field_path);
         if resolved_field == null {
-            set_typecheck_error(parser, "Unable to resolve referenced node path '%'.", reference.field_path, node = node, loc = node.location);
+            set_typecheck_error(parser, "Unable to resolve referenced node path '%'.", reference.field_path, node = node);
             return null; 
         }
         reference.resolved_field = resolved_field;
@@ -836,7 +836,11 @@ LSD_parse_binary :: (lexer: *Lexer, left: *Node, min_prec: int) -> *Node {
         get_token(lexer);
         arg_exprs, ok := parse_procedure_arguments(lexer);
         if !ok  return null;
-        return make_procedure_call(lexer.script, token, left, arg_exprs);
+        
+        proc_call := make_procedure_call(lexer.script, token, left, arg_exprs);
+        proc_call.location.l1 = xx lexer.line_number;
+        proc_call.location.c1 = xx lexer.character_number;
+        return proc_call;
         
         
       case .DOT;
