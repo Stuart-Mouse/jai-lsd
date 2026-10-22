@@ -190,7 +190,7 @@ add_indirect_bindings_for_aggregate :: (parser: *Parser, field_node: *Node_Field
                 }
                 
                 if !is_valid_binding {
-                    set_typecheck_error(parser, "Object with binding to array type must be indexed or contain a struct type with a name member defined in io_data. Element type was %", as_type(array.element_type), node = value_node);
+                    set_typecheck_error(parser, "Object with binding to array type must be indexed or contain a struct type with a name member defined in io_data. Element type was '%'.", as_type(array.element_type), node = value_node);
                     // TODO: write better error messages once we do big aggregates refactor.
                     // "In order to bind an array to a key/value aggregate, the array must be indexed or contain a struct type for which you have defined a key member in IO_Data."
                     // "This array contains elements of type '%', which is not a struct." "This array contains elements of type '%', which does not have a defined key member."
@@ -687,7 +687,7 @@ LSD_resolve_builtin_operation :: (
     if operation_id >= 0 {
         operator_lexical_type := BUILTIN_OPERATIONS[operation_id].type;
         if operator_lexical_type == .ASSIGNMENT {
-            return -1, false;
+            return 0, false;
         }
     }
     return operation_id, swap_arguments;
@@ -948,7 +948,7 @@ parse_field :: (lexer: *Lexer) -> *Node_Field {
                 node.location = name_token.location;
                 
               case;
-                set_parse_error(parser, "Expected a field name, but saw this instead: % (%)", name_token.text, name_token.type, node = node);
+                set_parse_error(parser, "Expected a field name before colon, but saw this instead: % (%)", name_token.text, name_token.type, node = node);
                 return null;
             }
         }
@@ -958,6 +958,10 @@ parse_field :: (lexer: *Lexer) -> *Node_Field {
     if node.value == null {
         if !has_error(parser) {
             set_parse_error(parser, "Expected an expression for field value.", node = node);
+            
+            next_token := peek_token(lexer);
+            log("Unable to parse expression, next token was: %", next_token);
+            log("current node was %", node.*);
         }
         return null;
     }
