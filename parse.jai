@@ -867,7 +867,7 @@ LSD_parse_binary :: (lexer: *Lexer, left: *Node, min_prec: int) -> *Node {
             object.parent = xx lexer.script.current_scope;
             assert(lexer.script.current_scope.node_type == Node_Field);
             
-            scope_end_token := ifx token.type == .OPEN_BRACE then Token_Type.CLOSE_BRACE else .CLOSE_BRACKET;
+            scope_end_token := ifx token_after_dot.type == .OPEN_BRACE then Token_Type.CLOSE_BRACE else .CLOSE_BRACKET;
             if !parse_contents_of_aggregate(lexer, object, scope_end_token)  return null;
             return make_dot(lexer.script, dot_token, left, object);
         }
