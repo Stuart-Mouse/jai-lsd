@@ -1004,7 +1004,9 @@ parse_contents_of_aggregate :: (lexer: *Lexer, object: *Node_Aggregate, scope_en
         append_child_node(parser, object, field);
     }
     
-    if first_field_has_name == 0 {
+    // NOTE: If first_field_has_name == -1 then there were no fields, in which case we treat the aggregate as a struct by default.
+    //       This prevents us getting an error during typechecking that I should probably just fix in another way.
+    if first_field_has_name == 0 || first_field_has_name == -1 {
         object.aggregate_flags |= .OMIT_KEYS;
     }
     return true;
